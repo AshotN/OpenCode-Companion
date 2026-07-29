@@ -15,7 +15,6 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
-import com.intellij.ui.content.Content
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
@@ -24,20 +23,19 @@ import javax.swing.JPanel
 /**
  * Hosts an embedded Reworked Terminal running `opencode attach <server-url>`.
  *
- * Uses the experimental [TerminalToolWindowTabsManager] API (available since 2025.3)
- * to create a terminal session that is never shown in the Terminal tool window.
- * The builder's internal `shouldAddToToolWindow(false)` option is currently the only
- * platform API that creates a detached session directly. The [TerminalView.component]
- * is embedded in the panel's [BorderLayout.CENTER].
+ * Uses the experimental [TerminalToolWindowTabsManager] API to create a detached terminal
+ * session that is never shown or persisted in the native Terminal tool window. Correct
+ * detached-session persistence requires IntelliJ Platform 2026.2 or newer. The
+ * [TerminalView.component] is embedded in the panel's [BorderLayout.CENTER].
  *
  * The terminal is started lazily on the first call to [startIfNeeded] and lives
  * for as long as this panel's parent [Disposable] is alive.
  *
  * **Testability note:** unlike [ClassicTuiPanel], this panel cannot be unit-tested
- * with a stub process. It delegates process cleanup entirely to the platform's
- * [Content] disposal chain — there is no explicit kill path to inject into or
- * assert against. [TerminalToolWindowTabsManager] also requires a fully initialised
- * IDE frontend that is not available in a headless test environment.
+ * with a stub process. It delegates process cleanup to the detached [TerminalView]
+ * coroutine scope, with no explicit process handle to inject or assert against.
+ * [TerminalToolWindowTabsManager] also requires a fully initialised IDE frontend
+ * that is not available in a headless test environment.
  */
 class ReworkedTuiPanel(
     private val project: Project,
@@ -46,7 +44,6 @@ class ReworkedTuiPanel(
     private val onTerminated: (() -> Unit)? = null,
 ) : JPanel(BorderLayout()), TuiPanel, Disposable {
 
-    private var terminalContent: Content? = null
     private var terminalView: TerminalView? = null
 
     init {
@@ -84,8 +81,6 @@ class ReworkedTuiPanel(
             )
             val manager = TerminalToolWindowTabsManager.getInstance(project)
 
-            // shouldAddToToolWindow(false): create the session entirely detached —
-            // it never appears as a tab in the Terminal tool window.
             val tab = manager.createTabBuilder()
                 .workingDirectory(workingDir)
                 .requestFocus(false)
@@ -94,16 +89,15 @@ class ReworkedTuiPanel(
                 .shellCommand(command)
                 .createTab()
 
-            val view = tab.view
-            val content = tab.content
-            terminalContent = content
+            // Notify the backend that this directly-created tab is externally owned so it
+            // is excluded from native Terminal persistence.
+            val view = try {
+                manager.detachTab(tab)
+            } catch (e: Exception) {
+                Disposer.dispose(tab.content as Disposable)
+                throw e
+            }
             terminalView = view
-
-            // shouldAddToToolWindow(false) means the content is never added to a ContentManager,
-            // so closeTab() would be a no-op (it routes through ContentManager.removeContent).
-            // Register the content in our own disposable tree so it is properly disposed when
-            // this panel is disposed, and so Disposer does not flag it as leaked under ROOT_DISPOSABLE.
-            Disposer.register(this, content as Disposable)
 
             // Watch sessionState flow: when Terminated the shell has exited.
             view.coroutineScope.launch {
@@ -146,22 +140,13 @@ class ReworkedTuiPanel(
 
     private fun tearDown() {
         val view = terminalView ?: return
-        val content = terminalContent
         terminalView = null
-        terminalContent = null
         remove(view.component)
         revalidate()
         repaint()
-        // Dispose the content to shut down the shell and release all associated resources.
-        // We can't use closeTab() here because it delegates to ContentManager.removeContent,
-        // which does nothing when the content has no manager (our case, since we used
-        // shouldAddToToolWindow(false) and never added the content to a ContentManager).
-        if (content != null) {
-            Disposer.dispose(content as Disposable)
-        } else {
-            // Fallback in case we lost the content reference — cancel the coroutine scope directly.
-            view.coroutineScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
-        }
+        // Detaching transfers ownership from the Terminal tool window to this panel.
+        // Cancel the view scope to terminate the process and release the frontend session.
+        view.coroutineScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
     }
 
     override fun dispose() {

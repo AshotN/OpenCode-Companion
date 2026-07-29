@@ -1,5 +1,6 @@
 package com.ashotn.opencode.relay.settings
 
+import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.components.*
 import com.intellij.openapi.project.Project
 
@@ -26,7 +27,7 @@ class OpenCodeSettings : PersistentStateComponent<OpenCodeSettings.State> {
         /** JBTerminalWidget (classic terminal plugin, works on all supported IDE versions). */
         CLASSIC,
 
-        /** TerminalToolWindowTabsManager (reworked terminal, requires IntelliJ 2025.3+). */
+        /** TerminalToolWindowTabsManager (reworked terminal, requires IntelliJ 2026.2+). */
         REWORKED,
     }
 
@@ -198,3 +199,18 @@ fun OpenCodeSettings.State.toSnapshot(): OpenCodeSettingsSnapshot = OpenCodeSett
 
 fun OpenCodeSettings.processEnvironmentVariables(overrides: Map<String, String> = emptyMap()): Map<String, String> =
     serverEnvironmentVariables.associate { it.name to it.value } + overrides
+
+internal const val REWORKED_TERMINAL_MIN_BASELINE_VERSION: Int = 262
+
+internal fun isReworkedTerminalSupported(
+    baselineVersion: Int = ApplicationInfo.getInstance().build.baselineVersion,
+): Boolean = baselineVersion >= REWORKED_TERMINAL_MIN_BASELINE_VERSION
+
+internal fun OpenCodeSettings.TerminalEngine.effectiveForIde(
+    baselineVersion: Int = ApplicationInfo.getInstance().build.baselineVersion,
+): OpenCodeSettings.TerminalEngine =
+    if (this == OpenCodeSettings.TerminalEngine.REWORKED && !isReworkedTerminalSupported(baselineVersion)) {
+        OpenCodeSettings.TerminalEngine.CLASSIC
+    } else {
+        this
+    }

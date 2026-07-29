@@ -66,6 +66,8 @@ configurations[liveTest.implementationConfigurationName].extendsFrom(configurati
 configurations[liveTest.runtimeOnlyConfigurationName].extendsFrom(configurations.testRuntimeOnly.get())
 
 intellijPlatform {
+    instrumentCode = false
+
     pluginConfiguration {
         id = "com.ashotn.opencode-relay"
         name = "OpenCode Relay"
@@ -101,6 +103,22 @@ intellijPlatform {
 }
 
 val sandboxProject = layout.buildDirectory.dir("sandbox-project").get().asFile
+val idea262Home = providers.gradleProperty("idea262Home")
+    .orElse(providers.environmentVariable("IDEA_262_HOME"))
+    .orElse(providers.provider {
+        "${System.getProperty("user.home")}/.local/share/JetBrains/Toolbox/apps/intellij-idea"
+    })
+
+val runIde262 by intellijPlatformTesting.runIde.registering {
+    localPath = layout.dir(idea262Home.map(::file))
+    sandboxDirectory = layout.buildDirectory.dir("idea-sandbox-262")
+
+    task {
+        description = "Runs the plugin in a local IntelliJ IDEA 2026.2 sandbox."
+        doFirst { sandboxProject.mkdirs() }
+        args(sandboxProject.absolutePath)
+    }
+}
 
 fun mainOutputFriendPaths(): String =
     sourceSets["main"].output.classesDirs.files.joinToString(",") { it.absolutePath }

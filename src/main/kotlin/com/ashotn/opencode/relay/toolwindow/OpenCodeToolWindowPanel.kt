@@ -13,6 +13,7 @@ import com.ashotn.opencode.relay.permission.OpenCodePermissionService
 import com.ashotn.opencode.relay.settings.OpenCodeSettings
 import com.ashotn.opencode.relay.settings.OpenCodeSettings.TerminalEngine
 import com.ashotn.opencode.relay.settings.OpenCodeSettingsChangedListener
+import com.ashotn.opencode.relay.settings.effectiveForIde
 import com.ashotn.opencode.relay.terminal.ClassicTuiPanel
 import com.ashotn.opencode.relay.terminal.ReworkedTuiPanel
 import com.ashotn.opencode.relay.terminal.TuiPanel
@@ -59,7 +60,7 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val mcpWarningPanel = JetBrainsMcpWarningPanel(project)
     private val pendingFilesPanel = PendingFilesPanel(project, this)
     private var tuiPanel: TuiPanel = createTuiPanel()
-    private var activeTuiEngine: TerminalEngine = OpenCodeSettings.getInstance(project).terminalEngine
+    private var activeTuiEngine: TerminalEngine = configuredTuiEngine()
     private val syncScheduled = AtomicBoolean(false)
     private val plugin = OpenCodePlugin.getInstance(project)
     private val serverStateListener = ServerStateListener { requestSyncCard() }
@@ -212,7 +213,7 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
      * it into the split pane — all without requiring an IDE restart.
      */
     private fun swapTuiPanelIfEngineChanged() {
-        val configuredEngine = OpenCodeSettings.getInstance(project).terminalEngine
+        val configuredEngine = configuredTuiEngine()
         if (configuredEngine == activeTuiEngine) return
 
         // Stop and dispose the old panel.
@@ -246,10 +247,13 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
 
     /** Creates the terminal panel for the configured [OpenCodeSettings.terminalEngine]. */
     private fun createTuiPanel(): TuiPanel =
-        when (OpenCodeSettings.getInstance(project).terminalEngine) {
+        when (configuredTuiEngine()) {
             TerminalEngine.CLASSIC -> ClassicTuiPanel(project, this, onTerminated = { requestSyncCard() })
             TerminalEngine.REWORKED -> ReworkedTuiPanel(project, this, onTerminated = { requestSyncCard() })
         }
+
+    private fun configuredTuiEngine(): TerminalEngine =
+        OpenCodeSettings.getInstance(project).terminalEngine.effectiveForIde()
 
 
     private var disposed = false
