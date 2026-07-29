@@ -47,7 +47,7 @@ val liveTest by sourceSets.creating {
 
 dependencies {
     intellijPlatform {
-        intellijIdea("2024.3.7")
+        intellijIdea("2025.3.3")
         pluginVerifier()
         bundledPlugin("org.jetbrains.plugins.terminal")
         compatiblePlugin("com.intellij.mcpServer")
@@ -80,14 +80,14 @@ intellijPlatform {
         }
 
         ideaVersion {
-            sinceBuild = "243"
+            sinceBuild = "253"
             untilBuild = provider { null }
         }
     }
 
     pluginVerification {
         ides {
-            create(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdea, "2024.3.7")
+            create(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdea, "2025.3.3")
         }
     }
 
@@ -154,9 +154,4 @@ tasks {
 
 kotlin {
     jvmToolchain(21)
-
-    sourceSets.named("main") {
-        kotlin.exclude("com/ashotn/opencode/relay/terminal/ReworkedTuiPanel.kt")
-        kotlin.exclude("com/ashotn/opencode/relay/terminal/NewSessionTerminalAllowedActionsProvider.kt")
-    }
 }

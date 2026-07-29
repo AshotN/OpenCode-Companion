@@ -12,7 +12,6 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
-import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
@@ -25,11 +24,11 @@ import javax.swing.JPanel
 /**
  * Hosts an embedded Reworked Terminal running `opencode attach <server-url>`.
  *
- * Uses the official [TerminalToolWindowTabsManager] API (available since 2025.3)
- * to create a terminal session that is never shown in the Terminal tool window —
- * `shouldAddToToolWindow(false)` keeps it fully detached so it lives only inside
- * this panel. The [TerminalView.component] is embedded directly in the panel's
- * [BorderLayout.CENTER].
+ * Uses the experimental [TerminalToolWindowTabsManager] API (available since 2025.3)
+ * to create a terminal session that is never shown in the Terminal tool window.
+ * The builder's internal `shouldAddToToolWindow(false)` option is currently the only
+ * platform API that creates a detached session directly. The [TerminalView.component]
+ * is embedded in the panel's [BorderLayout.CENTER].
  *
  * The terminal is started lazily on the first call to [startIfNeeded] and lives
  * for as long as this panel's parent [Disposable] is alive.
@@ -47,7 +46,6 @@ class ReworkedTuiPanel(
     private val onTerminated: (() -> Unit)? = null,
 ) : JPanel(BorderLayout()), TuiPanel, Disposable {
 
-    private var terminalTab: TerminalToolWindowTab? = null
     private var terminalContent: Content? = null
     private var terminalView: TerminalView? = null
 
@@ -98,7 +96,6 @@ class ReworkedTuiPanel(
 
             val view = tab.view
             val content = tab.content
-            terminalTab = tab
             terminalContent = content
             terminalView = view
 
@@ -115,12 +112,7 @@ class ReworkedTuiPanel(
                     if (state is TerminalViewSessionState.Terminated) {
                         ApplicationManager.getApplication().invokeLater {
                             if (terminalView === view) {
-                                terminalView = null
-                                terminalTab = null
-                                terminalContent = null
-                                remove(view.component)
-                                revalidate()
-                                repaint()
+                                tearDown()
                                 onTerminated?.invoke()
                             }
                         }
@@ -156,7 +148,6 @@ class ReworkedTuiPanel(
         val view = terminalView ?: return
         val content = terminalContent
         terminalView = null
-        terminalTab = null
         terminalContent = null
         remove(view.component)
         revalidate()

@@ -26,7 +26,7 @@ class OpenCodeSettings : PersistentStateComponent<OpenCodeSettings.State> {
         /** JBTerminalWidget (classic terminal plugin, works on all supported IDE versions). */
         CLASSIC,
 
-        /** Parked reworked terminal option kept for easy re-enable later. */
+        /** TerminalToolWindowTabsManager (reworked terminal, requires IntelliJ 2025.3+). */
         REWORKED,
     }
 

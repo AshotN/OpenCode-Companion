@@ -17,7 +17,6 @@ import com.intellij.terminal.JBTerminalPanel
 import com.intellij.terminal.ui.TerminalWidget
 import com.intellij.util.ui.ImageUtil
 import com.jediterm.terminal.TtyConnector
-import com.pty4j.PtyProcess
 import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
 import org.jetbrains.plugins.terminal.ShellStartupOptions
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
@@ -35,10 +34,7 @@ import java.awt.image.BufferedImage
 import java.io.File
 import java.io.IOException
 import java.lang.reflect.Proxy
-import java.lang.invoke.MethodHandles
-import java.lang.invoke.MethodType
 import java.nio.file.Files
-import java.util.concurrent.ExecutionException
 import javax.imageio.ImageIO
 import javax.swing.ImageIcon
 import javax.swing.JPanel
@@ -313,41 +309,8 @@ class ClassicTuiPanel(
     }
 
     private class ClipboardAwareTerminalRunner(project: Project) : LocalTerminalDirectRunner(project) {
-        override fun createTtyConnector(process: PtyProcess): TtyConnector =
-            wrapTtyConnector(super.createTtyConnector(process))
-
-        /**
-         * Runtime override for newer IDEs where terminal startup calls createTtyConnector(ShellStartupOptions).
-         * This project still compiles against 2024.3, where that method is absent, so this cannot use `override`.
-         */
-        @Suppress("unused")
-        @Throws(ExecutionException::class)
-        fun createTtyConnector(startupOptions: ShellStartupOptions): TtyConnector =
-            wrapTtyConnector(createPlatformTtyConnector(startupOptions))
-
-        private fun createPlatformTtyConnector(startupOptions: ShellStartupOptions): TtyConnector {
-            val createTtyConnectorHandle = try {
-                val methodType = MethodType.methodType(TtyConnector::class.java, ShellStartupOptions::class.java)
-                MethodHandles.lookup()
-                    .findSpecial(
-                        LocalTerminalDirectRunner::class.java,
-                        "createTtyConnector",
-                        methodType,
-                        ClipboardAwareTerminalRunner::class.java,
-                    )
-                    .bindTo(this)
-            } catch (_: NoSuchMethodException) {
-                return super.createTtyConnector(createProcess(startupOptions))
-            } catch (e: IllegalAccessException) {
-                logger.warn("Unable to call new terminal connector path; falling back to PTY connector", e)
-                return super.createTtyConnector(createProcess(startupOptions))
-            } catch (e: LinkageError) {
-                logger.warn("Unable to link new terminal connector path; falling back to PTY connector", e)
-                return super.createTtyConnector(createProcess(startupOptions))
-            }
-
-            return createTtyConnectorHandle.invokeWithArguments(startupOptions) as TtyConnector
-        }
+        override fun createTtyConnector(startupOptions: ShellStartupOptions): TtyConnector =
+            wrapTtyConnector(super.createTtyConnector(startupOptions))
 
         private fun wrapTtyConnector(delegate: TtyConnector): TtyConnector =
             Osc52ClipboardTtyConnector(delegate) { text ->

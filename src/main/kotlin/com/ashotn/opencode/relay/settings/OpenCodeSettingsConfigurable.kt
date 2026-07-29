@@ -228,6 +228,10 @@ class OpenCodeSettingsConfigurable(private val project: Project) :
                         radioButton("Classic (Recommended)", TerminalEngine.CLASSIC)
                             .comment("Legacy JediTerm widget.")
                     }
+                    row {
+                        radioButton("Reworked", TerminalEngine.REWORKED)
+                            .comment("New terminal engine.")
+                    }
                 }.bind(pendingState::terminalEngine)
             }
             group("Diagnostics") {
@@ -419,8 +423,7 @@ class OpenCodeSettingsConfigurable(private val project: Project) :
         pendingState.diffTraceHistoryEnabled = settings.diffTraceHistoryEnabled
         pendingState.inlineTerminalEnabled = settings.inlineTerminalEnabled
         pendingState.sessionsSectionVisible = settings.sessionsSectionVisible
-        pendingState.terminalEngine =
-            if (settings.terminalEngine == TerminalEngine.REWORKED) TerminalEngine.CLASSIC else settings.terminalEngine
+        pendingState.terminalEngine = settings.terminalEngine
         pendingState.braveModeEnabled = settings.braveModeEnabled
         pendingState.jetBrainsMcpWarningEnabled = settings.jetBrainsMcpWarningEnabled
     }

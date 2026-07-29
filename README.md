@@ -103,8 +103,7 @@ it.
 
 ### Permission prompts
 
-When any agent requests permission, a prompt appears at the bottom of
-the panel with three choices:
+When any agent requests permission, a prompt appears at the bottom of the panel with three choices:
 
 - **Allow** — permit this one request
 - **Allow Always** — permit this type of request for the rest of the session
@@ -114,7 +113,7 @@ Responses are sent back to the server immediately.
 
 ## Requirements
 
-- A JetBrains IDE based on IntelliJ Platform 2024.3.7 or later
+- A JetBrains IDE based on IntelliJ Platform 2025.3 or later
 - [OpenCode CLI](https://opencode.ai/docs) version `1.16.0+` installed and on `PATH` (or the path configured in
   settings)
 
@@ -126,8 +125,7 @@ OpenCode Relay will warn you when JetBrains MCP is disabled or when a running Op
 
 To enable JetBrains MCP:
 
-1. Open **Settings | Tools | MCP Server** in your JetBrains
-   IDE and enable the server.
+1. Open **Settings | Tools | MCP Server** in your JetBrains IDE and enable the server.
 2. Note the MCP server URL or port shown in the IDE settings.
 3. Add a `jetbrains` MCP server to your `opencode.json`.
 4. Restart the OpenCode server so it reloads the config.
@@ -147,8 +145,8 @@ Basic `opencode.json` example:
 }
 ```
 
-Edit `url` to match the host, port, and path from **Settings | Tools | MCP Server**. If your IDE shows a different
-port, replace `64342` with that port.
+Edit `url` to match the host, port, and path from **Settings | Tools | MCP Server**. If your IDE shows a different port,
+replace `64342` with that port.
 
 ### MCP Tips
 
