@@ -42,7 +42,7 @@ class SendProjectViewSelectionAction : AnAction(), DumbAware {
         val projectBase = project.basePath
         val ref = selected.joinToString(" ") { item ->
             val relativePath = projectBase?.let { item.path.toProjectRelativePath(it) } ?: item.path
-            "@$relativePath"
+            formatProjectViewReference(relativePath, item.isDirectory)
         } + " "
 
         OpenCodeTuiClient.getInstance(project).appendToTuiPrompt(ref) { success, error ->
@@ -93,4 +93,9 @@ class SendProjectViewSelectionAction : AnAction(), DumbAware {
         selected.all { it.isDirectory } -> "${selected.size} folder references"
         else -> "${selected.size} selected item references"
     }
+}
+
+internal fun formatProjectViewReference(path: String, isDirectory: Boolean): String {
+    if (!isDirectory) return "@$path"
+    return "@${path.trimEnd('/').ifEmpty { "." }}/"
 }

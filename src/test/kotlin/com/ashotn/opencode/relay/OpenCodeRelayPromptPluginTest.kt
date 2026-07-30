@@ -106,10 +106,11 @@ class OpenCodeRelayPromptPluginTest {
         val pluginText = Files.readString(configDirectory.resolve("plugins/opencode-relay-prompt.js"))
         val guidance = extractIdeGuidance(pluginText)
         assertTrue(guidance.contains("You are running inside IntelliJ IDEA 2026.1 (build IU-261.1) through OpenCode Relay (plugin version test-plugin-version)."))
-        assertTrue(guidance.contains("Prefer visible bare paths for long or deeply nested files"))
-        assertTrue(guidance.contains("path/to/File.kt#L42"))
-        assertTrue(guidance.contains("./path/to/File.kt#L42-L48"))
-        assertTrue(guidance.contains("[File.kt:42](./path/to/File.kt#L42)"))
+        assertTrue(guidance.contains("./path/to/File.kt:42"))
+        assertTrue(guidance.contains("./path/to/File.kt without one"))
+        assertTrue(guidance.contains("./path/to/File.kt:42 (lines 42-48)"))
+        assertTrue(guidance.contains("file:///absolute/path"))
+        assertTrue(guidance.contains("do not use Markdown links, #L anchors, line-range suffixes, or plain absolute paths"))
         assertFalse(pluginText.contains("__OPENCODE_RELAY_IDE_GUIDANCE__"))
     }
 

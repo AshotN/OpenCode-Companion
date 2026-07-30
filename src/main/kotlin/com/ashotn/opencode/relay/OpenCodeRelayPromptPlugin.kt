@@ -76,7 +76,7 @@ internal object OpenCodeRelayPromptPlugin {
     internal fun ideGuidance(): String =
         """You are running inside ${ideDescriptionProvider()} through OpenCode Relay (plugin version ${pluginVersionProvider()}).
 
-When you would normally cite a file, use clickable local paths. Prefer visible bare paths for long or deeply nested files because terminal wrapping can break Markdown link targets. Good forms: path/to/File.kt, ./path/to/File.kt, path/to/File.kt#L42, ./path/to/File.kt#L42-L48. Markdown links are acceptable for short targets: [File.kt:42](./path/to/File.kt#L42). Avoid using full paths, prefer relative paths.
+When citing files, emit plain project-relative paths using JetBrains terminal link syntax. Use ./path/to/File.kt:42 for a specific line and ./path/to/File.kt without one. For a range, link the first line and describe the range, for example ./path/to/File.kt:42 (lines 42-48). For a file outside the project, use a file:///absolute/path URL. Always include the ./ prefix for project-relative paths; do not use Markdown links, #L anchors, line-range suffixes, or plain absolute paths.
 """
 
     private fun currentIdeDescription(): String {

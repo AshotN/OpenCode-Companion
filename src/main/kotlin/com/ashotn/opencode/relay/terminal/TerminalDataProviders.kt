@@ -21,7 +21,7 @@ internal fun installEmbeddedTerminalDataProvider(
     // explicit null wins before any ancestor ToolWindow provider in the data-context chain.
     installTerminalToolWindowOverride(panel)
     installEmbeddedTerminalKeyOverrides(panel)
-    installMarkdownTerminalHyperlinkFilter(project, panel)
+    installClassicTerminalHyperlinkFilter(project, panel)
 }
 
 internal fun uninstallEmbeddedTerminalDataProvider(panel: JBTerminalPanel) {

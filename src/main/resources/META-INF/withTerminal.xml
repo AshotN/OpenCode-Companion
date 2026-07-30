@@ -1,6 +1,0 @@
-<idea-plugin>
-    <extensions defaultExtensionNs="org.jetbrains.plugins.terminal">
-        <allowedActionsProvider
-                implementation="com.ashotn.opencode.relay.terminal.NewSessionTerminalAllowedActionsProvider"/>
-    </extensions>
-</idea-plugin>

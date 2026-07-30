@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+<p><strong>Added</strong></p>
+<ul>
+  <li>Add the Reworked Terminal as an optional embedded TUI engine on IntelliJ Platform 2026.2 and newer, with feature parity for clipboard integration, file drag and drop, and file navigation.</li>
+</ul>
+
+<p><strong>Breaking Changes</strong></p>
+<ul>
+  <li>Drop support for IntelliJ Platform versions earlier than 2025.3.</li>
+</ul>
+
+<p><strong>Changed</strong></p>
+<ul>
+  <li>Standardize generated IDE file references on project-relative <code>./path/to/File.kt:line</code> syntax.</li>
+</ul>
+
+<p><strong>Fixed</strong></p>
+<ul>
+  <li>Improve embedded terminal cleanup and restart behavior when startup fails, a session terminates, or the terminal engine changes.</li>
+</ul>
+
 ## [2.2.0] - 2026-06-25
 
 <p><strong>Fixed</strong></p>

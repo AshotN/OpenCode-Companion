@@ -73,9 +73,11 @@ internal class Osc52ClipboardHandler(
         val payload = body.substring(separatorIndex + 1)
         if (payload == "?") return
 
-        val decodedText = runCatching {
-            Base64.getMimeDecoder().decode(payload).toString(Charsets.UTF_8)
-        }.getOrNull() ?: return
+        val decodedText = try {
+            Base64.getDecoder().decode(payload).toString(Charsets.UTF_8)
+        } catch (_: IllegalArgumentException) {
+            return
+        }
 
         clipboardWriter(decodedText)
     }

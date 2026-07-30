@@ -8,16 +8,25 @@ import com.ashotn.opencode.relay.settings.OpenCodeSettings
 import com.ashotn.opencode.relay.settings.OpenCodeServerAuth
 import com.ashotn.opencode.relay.settings.processEnvironmentVariables
 import com.ashotn.opencode.relay.util.serverUrl
+import com.intellij.ide.dnd.DnDSupport
+import com.intellij.ide.dnd.FileCopyPasteUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.ControlFlowException
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
-import com.intellij.openapi.diagnostic.Logger
+import com.jediterm.core.util.TermSize
 import kotlinx.coroutines.launch
+import org.jetbrains.plugins.terminal.ShellStartupOptions
 import java.awt.BorderLayout
+import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JPanel
 
 /**
@@ -30,12 +39,6 @@ import javax.swing.JPanel
  *
  * The terminal is started lazily on the first call to [startIfNeeded] and lives
  * for as long as this panel's parent [Disposable] is alive.
- *
- * **Testability note:** unlike [ClassicTuiPanel], this panel cannot be unit-tested
- * with a stub process. It delegates process cleanup to the detached [TerminalView]
- * coroutine scope, with no explicit process handle to inject or assert against.
- * [TerminalToolWindowTabsManager] also requires a fully initialised IDE frontend
- * that is not available in a headless test environment.
  */
 class ReworkedTuiPanel(
     private val project: Project,
@@ -45,6 +48,8 @@ class ReworkedTuiPanel(
 ) : JPanel(BorderLayout()), TuiPanel, Disposable {
 
     private var terminalView: TerminalView? = null
+    private var fileDropDisposable: Disposable? = null
+    private var osc52Session: ReworkedOsc52Session? = null
 
     init {
         Disposer.register(parentDisposable, this)
@@ -81,23 +86,66 @@ class ReworkedTuiPanel(
             )
             val manager = TerminalToolWindowTabsManager.getInstance(project)
 
-            val tab = manager.createTabBuilder()
+            val tabBuilder = manager.createTabBuilder()
                 .workingDirectory(workingDir)
                 .requestFocus(false)
                 .shouldAddToToolWindow(false)
                 .tabName("OpenCode Relay")
                 .shellCommand(command)
-                .createTab()
+            val startupOptions = ShellStartupOptions.Builder()
+                .workingDirectory(workingDir)
+                .shellCommand(command)
+                .initialTermSize(TermSize(80, 20))
+                .build()
+            val pendingOsc52Session = AtomicReference<ReworkedOsc52Session?>()
+            try {
+                runWithModalProgressBlocking(project, "Starting OpenCode terminal") {
+                    pendingOsc52Session.set(
+                        ReworkedOsc52Session.tryStart(project, startupOptions, tabBuilder) { text ->
+                            ApplicationManager.getApplication().invokeLater {
+                                if (!project.isDisposed) CopyPasteManager.copyTextToClipboard(text)
+                            }
+                        }
+                    )
+                }
+                osc52Session = pendingOsc52Session.getAndSet(null)
+            } finally {
+                pendingOsc52Session.getAndSet(null)?.let { Disposer.dispose(it) }
+            }
+            osc52Session?.let { session ->
+                session.invokeOnTermination {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (
+                            osc52Session === session &&
+                            terminalView?.sessionState?.value != TerminalViewSessionState.Running
+                        ) {
+                            tearDown()
+                            onTerminated?.invoke()
+                        }
+                    }
+                }
+            }
+            if (osc52Session != null) {
+                // An injected session is already running and must be connected immediately.
+                // The fixed initial size is updated by the view after it is embedded below.
+                tabBuilder.deferSessionStartUntilUiShown(false)
+            }
+            val tab = tabBuilder.createTab()
 
             // Notify the backend that this directly-created tab is externally owned so it
             // is excluded from native Terminal persistence.
+            var detached = false
             val view = try {
-                manager.detachTab(tab)
-            } catch (e: Exception) {
-                Disposer.dispose(tab.content as Disposable)
-                throw e
+                manager.detachTab(tab).also {
+                    detached = true
+                }
+            } finally {
+                if (!detached) {
+                    Disposer.dispose(tab.content as Disposable)
+                }
             }
             terminalView = view
+            installFileDropTarget(view)
 
             // Watch sessionState flow: when Terminated the shell has exited.
             view.coroutineScope.launch {
@@ -118,12 +166,22 @@ class ReworkedTuiPanel(
             revalidate()
             repaint()
 
-        } catch (e: NoClassDefFoundError) {
+        } catch (e: LinkageError) {
+            tearDown()
             logger.warn("Reworked terminal classes unavailable", e)
             // Panel stays empty.
         } catch (e: Exception) {
+            tearDown()
+            if (e is CancellationException || e is ControlFlowException) throw e
+            if (e is InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw e
+            }
             logger.warn("Failed to start reworked terminal", e)
             // Panel stays empty.
+        } catch (e: Throwable) {
+            tearDown()
+            throw e
         }
     }
 
@@ -138,15 +196,54 @@ class ReworkedTuiPanel(
     /** Tears down the running session. The next [startIfNeeded] will create a fresh one. */
     override fun stop() = tearDown()
 
+    private fun installFileDropTarget(view: TerminalView) {
+        val disposable = Disposer.newDisposable("OpenCode reworked terminal file drop")
+        fileDropDisposable = disposable
+        DnDSupport.createBuilder(view.component)
+            .disableAsSource()
+            .enableAsNativeTarget()
+            .setDropHandlerWithResult { event ->
+                val files = FileCopyPasteUtil.getFileListFromAttachedObject(event.attachedObject)
+                if (files.isEmpty()) return@setDropHandlerWithResult false
+
+                view.preferredFocusableComponent.requestFocusInWindow()
+                view.coroutineScope.launch {
+                    files.forEach { file ->
+                        view.createSendTextBuilder()
+                            .useBracketedPasteMode()
+                            .send(file.absolutePath)
+                    }
+                }
+                true
+            }
+            .setDisposableParent(disposable)
+            .install()
+    }
+
     private fun tearDown() {
-        val view = terminalView ?: return
+        val view = terminalView
         terminalView = null
-        remove(view.component)
-        revalidate()
-        repaint()
-        // Detaching transfers ownership from the Terminal tool window to this panel.
-        // Cancel the view scope to terminate the process and release the frontend session.
-        view.coroutineScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        val dropTarget = fileDropDisposable
+        fileDropDisposable = null
+        val session = osc52Session
+        osc52Session = null
+
+        try {
+            try {
+                dropTarget?.let { Disposer.dispose(it) }
+            } finally {
+                session?.let { Disposer.dispose(it) }
+            }
+        } finally {
+            if (view != null) {
+                // Detaching transfers ownership from the Terminal tool window to this panel.
+                // Cancel the view scope to terminate the process and release the frontend session.
+                view.coroutineScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+                remove(view.component)
+                revalidate()
+                repaint()
+            }
+        }
     }
 
     override fun dispose() {
