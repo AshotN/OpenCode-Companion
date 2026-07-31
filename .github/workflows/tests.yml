@@ -86,7 +86,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: live-test-results
-          path: |
-            build/reports/tests/liveTest/
-            .cache/opencode-test/runs/
+          path: build/reports/tests/liveTest/
           if-no-files-found: ignore

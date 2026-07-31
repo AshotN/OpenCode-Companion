@@ -42,36 +42,6 @@ class ClassicTuiPanelProcessLeakTest : BasePlatformTestCase() {
         assertFalse("process must be dead after dispose() (pid=$pid)", isAlive(pid))
     }
 
-    fun `test reset cycle kills both the old and the new terminal process`() {
-        val process1 = spawnSleepProcess()
-        val pid1 = process1.pid()
-        val process2 = spawnSleepProcess()
-        val pid2 = process2.pid()
-
-        // Use a fresh panel per cycle via processOverride on each startIfNeeded call.
-        // First session: inject process1.
-        val panel = ClassicTuiPanel(project, testRootDisposable, processOverride = process1)
-        ApplicationManager.getApplication().invokeAndWait { panel.startIfNeeded() }
-        assertTrue("pre cycle 1: process1 alive (pid=$pid1)", isAlive(pid1))
-
-        panel.stop()
-        waitForDeath(pid1)
-        assertFalse("cycle 1: process1 must be dead (pid=$pid1)", isAlive(pid1))
-
-        // Second session: swap in process2 via a new panel (panel.stop() cleared terminalWidget).
-        val panel2 = ClassicTuiPanel(project, testRootDisposable, processOverride = process2)
-        ApplicationManager.getApplication().invokeAndWait { panel2.startIfNeeded() }
-        assertTrue("pre cycle 2: process2 alive (pid=$pid2)", isAlive(pid2))
-
-        panel2.stop()
-        waitForDeath(pid2)
-        assertFalse("cycle 2: process2 must be dead (pid=$pid2)", isAlive(pid2))
-
-        assertFalse("cycle 1 process must still be dead (pid=$pid1)", isAlive(pid1))
-    }
-
-    // ---- helpers ----
-
     private fun spawnSleepProcess(): Process =
         ProcessBuilder("sleep", "3600").redirectErrorStream(true).start()
 

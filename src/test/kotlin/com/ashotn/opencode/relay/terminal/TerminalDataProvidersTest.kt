@@ -6,20 +6,14 @@ import com.intellij.openapi.actionSystem.DataProvider
 import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindow
-import com.intellij.terminal.JBTerminalPanel
-import com.intellij.terminal.JBTerminalSystemSettingsProviderBase
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import com.jediterm.terminal.model.StyleState
-import com.jediterm.terminal.model.TerminalTextBuffer
 import java.awt.BorderLayout
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.io.File
 import java.lang.reflect.Proxy
-import java.util.function.Consumer
 import javax.swing.JPanel
 
 class TerminalDataProvidersTest : BasePlatformTestCase() {
@@ -48,117 +42,106 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
         }
     }
 
-    fun `test embedded terminal data provider installs ctrl z key override without intercepting escape`() {
-        val terminalPanel = createTerminalPanel()
-        val existingHandlers = preKeyEventHandlers(terminalPanel)
+    fun `test embedded terminal consumes only ctrl z key presses`() {
+        val source = JPanel()
+        val cases = listOf(
+            KeyEvent.KEY_PRESSED to InputEvent.CTRL_DOWN_MASK,
+            KeyEvent.KEY_RELEASED to InputEvent.CTRL_DOWN_MASK,
+            KeyEvent.KEY_PRESSED to (InputEvent.CTRL_DOWN_MASK or InputEvent.SHIFT_DOWN_MASK),
+        )
 
-        try {
-            installEmbeddedTerminalDataProvider(project, terminalPanel)
-
-            val handlers = preKeyEventHandlers(terminalPanel)
-            val addedHandlers = handlers.drop(existingHandlers.size)
-            assertEquals(1, addedHandlers.size)
-
-            val ctrlZ = KeyEvent(
-                terminalPanel,
-                KeyEvent.KEY_PRESSED,
-                System.currentTimeMillis(),
-                InputEvent.CTRL_DOWN_MASK,
-                KeyEvent.VK_Z,
-                'Z',
-            )
-            addedHandlers.forEach { it.accept(ctrlZ) }
-            assertTrue(ctrlZ.isConsumed)
-
-            val escape = KeyEvent(
-                terminalPanel,
-                KeyEvent.KEY_PRESSED,
-                System.currentTimeMillis(),
-                0,
-                KeyEvent.VK_ESCAPE,
-                KeyEvent.CHAR_UNDEFINED,
-            )
-            addedHandlers.forEach { it.accept(escape) }
-            assertFalse(escape.isConsumed)
-        } finally {
-            ensureTerminalPanelCanBeDisposed(terminalPanel)
-            Disposer.dispose(terminalPanel)
+        cases.forEachIndexed { index, (eventId, modifiers) ->
+            val event = KeyEvent(source, eventId, 0, modifiers, KeyEvent.VK_Z, 'Z')
+            assertEquals(index == 0, consumeEmbeddedTerminalControlKey(event))
         }
+
+        val escape = KeyEvent(source, KeyEvent.KEY_PRESSED, 0, 0, KeyEvent.VK_ESCAPE, KeyEvent.CHAR_UNDEFINED)
+        assertFalse(consumeEmbeddedTerminalControlKey(escape))
     }
 
-    fun `test classic hyperlink filter resolves local paths with optional line`() {
+    fun `test local file reference matcher contract`() {
         data class Case(
-            val text: String,
+            val line: String,
             val target: String,
-            val relativePath: String,
+            val file: File,
             val lineNumber: Int?,
         )
 
-        val cases = listOf(
-            Case("See ./README.md.", "./README.md", "README.md", null),
-            Case("See src/main/Example.kt:42;", "src/main/Example.kt:42", "src/main/Example.kt", 42),
-        )
-
-        cases.forEach { case ->
-            val file = File(project.basePath, case.relativePath).apply {
-                parentFile?.mkdirs()
-                writeText((1..50).joinToString("\n") { "line $it" })
-            }
+        val readme = createProjectFile("README.md", "one\ntwo\nthree\n")
+        val nested = createProjectFile("src/main/Example.kt", (1..50).joinToString("\n") { "line $it" })
+        val encoded = createProjectFile("encoded name.md", "content\n")
+        val punctuated = createProjectFile("literal!", "content\n")
+        val directory = File(project.basePath, "local-directory").apply { mkdirs() }
+        listOf(readme, nested, encoded, punctuated, directory).forEach { file ->
             assertNotNull(LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file))
-
-            var navigatedFile: VirtualFileAndLine? = null
-            val result = ClassicTerminalHyperlinkFilter(project) { virtualFile, lineNumber ->
-                navigatedFile = VirtualFileAndLine(virtualFile.path, lineNumber)
-            }.apply(case.text)
-
-            val item = result!!.items.single()
-            val targetStart = case.text.indexOf(case.target)
-            assertEquals(targetStart, item.startOffset)
-            assertEquals(targetStart + case.target.length, item.endOffset)
-            item.linkInfo.navigate()
-            assertEquals(file.path, navigatedFile?.path)
-            assertEquals(case.lineNumber, navigatedFile?.lineNumber)
         }
+
+        val targetWithLine = "./README.md:2"
+        val cases = listOf(
+            Case("See ./README.md", "./README.md", readme, null),
+            Case("See ${readme.path}", readme.path, readme, null),
+            Case("See src/main/Example.kt:42;", "src/main/Example.kt:42", nested, 42),
+            Case("See ./encoded%20name.md", "./encoded%20name.md", encoded, null),
+            Case("See ./literal!?", "./literal!", punctuated, null),
+            Case("Open ./local-directory/.", "./local-directory/", directory, null),
+        ) + listOf('.', ',', ':', ';', '!', '?').map { punctuation ->
+            Case("See $targetWithLine$punctuation", targetWithLine, readme, 2)
+        }
+
+        val matcher = LocalFileReferenceMatcher(project)
+        cases.forEach { case ->
+            val result = matcher.findAll(case.line).single()
+            assertEquals(case.file.path, result.virtualFile.path)
+            assertEquals(case.lineNumber, result.lineNumberOneBased)
+            assertEquals(case.line.indexOf(case.target), result.sourceStartOffset)
+            assertEquals(case.line.indexOf(case.target) + case.target.length, result.sourceEndOffset)
+        }
+
+        listOf(
+            "See ./missing.md:2",
+            "See ./README.md:0",
+            "See ${readme.toURI()}",
+            "See @src/main/Example.kt#L2",
+        ).forEach { line -> assertTrue(matcher.findAll(line).isEmpty()) }
     }
 
-    fun `test classic hyperlink filter ignores missing files and file URIs`() {
-        val file = File(project.basePath, "note.md").apply { writeText("one\ntwo\nthree\n") }
+    fun `test Classic adapter maps local file reference to JediTerm link`() {
+        val file = createProjectFile("classic.kt", "one\ntwo\n")
         assertNotNull(LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file))
-        val filter = ClassicTerminalHyperlinkFilter(project)
+        val target = "./classic.kt:2"
+        val line = "See $target."
+        var navigatedFile: VirtualFileAndLine? = null
 
-        assertNull(filter.apply("See ./missing.md:2"))
-        assertNull(filter.apply("See ./note.md:0"))
-        assertNull(filter.apply("See ${file.toURI()}"))
-    }
+        val item = ClassicTerminalHyperlinkFilter(project) { virtualFile, lineNumber ->
+            navigatedFile = VirtualFileAndLine(virtualFile.path, lineNumber)
+        }.apply(line)!!.items.single()
 
-    fun `test classic hyperlink filter resolves a directory`() {
-        val directory = File(project.basePath, "src/main/kotlin").apply { mkdirs() }
-        assertNotNull(LocalFileSystem.getInstance().refreshAndFindFileByIoFile(directory))
-        val line = "Open src/main/kotlin/."
-        val target = "src/main/kotlin/"
-        var navigatedPath: String? = null
-        var navigatedToDirectory = false
-
-        val result = ClassicTerminalHyperlinkFilter(project) { virtualFile, lineNumber ->
-            navigatedPath = virtualFile.path
-            navigatedToDirectory = virtualFile.isDirectory
-            assertNull(lineNumber)
-        }.apply(line)
-
-        val item = result!!.items.single()
         assertEquals(line.indexOf(target), item.startOffset)
         assertEquals(line.indexOf(target) + target.length, item.endOffset)
         item.linkInfo.navigate()
-        assertEquals(directory.path, navigatedPath)
-        assertTrue(navigatedToDirectory)
+        assertEquals(VirtualFileAndLine(file.path, 2), navigatedFile)
+    }
+
+    fun `test Reworked adapter maps local file reference to platform hyperlink`() {
+        val file = createProjectFile("reworked.kt", "one\ntwo\n")
+        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+        assertNotNull(virtualFile)
+        val target = "./reworked.kt:2"
+        val line = "| Source | $target |"
+
+        val item = createOpenCodeFileMentionFilter(project).applyFilter(line, line.length)!!.resultItems.single()
+
+        assertEquals(line.indexOf(target), item.highlightStartOffset)
+        assertEquals(line.indexOf(target) + target.length, item.highlightEndOffset)
+        val hyperlink = item.hyperlinkInfo as OpenFileHyperlinkInfo
+        assertEquals(virtualFile!!.path, hyperlink.virtualFile?.path)
+        hyperlink.navigate(project)
+        assertEquals(1, FileEditorManager.getInstance(project).selectedTextEditor!!.caretModel.logicalPosition.line)
     }
 
     fun `test OpenCode file mention filter resolves line ranges from the project root`() {
-        val firstFile = File(project.basePath, "note.md").apply { writeText("one\ntwo\nthree\n") }
-        val secondFile = File(project.basePath, "src/File.kt").apply {
-            parentFile.mkdirs()
-            writeText("one\ntwo\n")
-        }
+        val firstFile = createProjectFile("note.md", "one\ntwo\nthree\n")
+        val secondFile = createProjectFile("src/File.kt", "one\ntwo\n")
         val firstVirtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(firstFile)
         val secondVirtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(secondFile)
         assertNotNull(firstVirtualFile)
@@ -180,7 +163,7 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
     }
 
     fun `test OpenCode file mention filter rejects malformed line anchors`() {
-        val file = File(project.basePath, "note.md").apply { writeText("one\ntwo\nthree\n") }
+        val file = createProjectFile("note.md", "one\ntwo\nthree\n")
         assertNotNull(LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file))
         val filter = createOpenCodeFileMentionFilter(project)
 
@@ -203,7 +186,8 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
 
         val result = filter.applyFilter(line, line.length)
 
-        val item = result!!.resultItems.single()
+        assertEquals(1, result!!.resultItems.size)
+        val item = result.resultItems[0]
         assertEquals(line.indexOf(mention), item.highlightStartOffset)
         assertEquals(line.indexOf(mention) + mention.length, item.highlightEndOffset)
         val hyperlink = item.hyperlinkInfo as OpenFileHyperlinkInfo
@@ -229,33 +213,11 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
             }
         } as ToolWindow
 
-    private fun createTerminalPanel(): JBTerminalPanel {
-        lateinit var terminalPanel: JBTerminalPanel
-        ApplicationManager.getApplication().invokeAndWait {
-            val styleState = StyleState()
-            terminalPanel = JBTerminalPanel(
-                JBTerminalSystemSettingsProviderBase(),
-                TerminalTextBuffer(80, 24, styleState),
-                styleState,
-            )
+    private fun createProjectFile(path: String, content: String): File =
+        File(project.basePath, path).apply {
+            parentFile.mkdirs()
+            writeText(content)
         }
-        return terminalPanel
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun preKeyEventHandlers(terminalPanel: JBTerminalPanel): List<Consumer<KeyEvent>> {
-        val field = JBTerminalPanel::class.java.getDeclaredField("myPreKeyEventConsumers")
-        field.isAccessible = true
-        return (field.get(terminalPanel) as List<Consumer<KeyEvent>>).toList()
-    }
-
-    private fun ensureTerminalPanelCanBeDisposed(terminalPanel: JBTerminalPanel) {
-        val field = terminalPanel.javaClass.superclass.getDeclaredField("myRepaintTimer")
-        field.isAccessible = true
-        if (field.get(terminalPanel) == null) {
-            field.set(terminalPanel, javax.swing.Timer(0) { })
-        }
-    }
 
     private data class VirtualFileAndLine(
         val path: String,

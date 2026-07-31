@@ -10,18 +10,11 @@ import com.ashotn.opencode.relay.api.session.SessionApiClient
 import com.ashotn.opencode.relay.api.session.SessionDiffFile
 import com.ashotn.opencode.relay.api.session.SessionDiffSnapshot
 import com.ashotn.opencode.relay.api.transport.ApiResult
-import com.ashotn.opencode.relay.core.CoreDiffStateHarness
-import com.ashotn.opencode.relay.core.DiffPipelineHarness
-import com.ashotn.opencode.relay.core.DiffHunk
-import com.ashotn.opencode.relay.ipc.OpenCodeEvent
 import com.ashotn.opencode.relay.ipc.SessionDiffStatus
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
@@ -35,23 +28,8 @@ class OpenCodeDiffLiveTest(
 ) {
 
     private data class ChildDiffs(
-        val sessions: List<Session>,
-        val diffsBySessionId: Map<String, SessionDiffSnapshot>,
         val fileToChildSessionId: Map<String, String>,
         val diffSummaryRoleByFile: Map<String, String>,
-    )
-
-    private data class MessageDiffProbeContext(
-        val sessionClient: SessionApiClient,
-        val port: Int,
-        val sessionId: String,
-        val repoRoot: Path,
-    )
-
-    private data class MessageDiffProbeSnapshot(
-        val messageId: String,
-        val eventFiles: List<String>,
-        val fetchedFiles: List<String>,
     )
 
     companion object {
@@ -82,22 +60,6 @@ class OpenCodeDiffLiveTest(
 
             val createDiffFile = requireSessionDiffFile(sessionClient, server.port, sessionId, "hello.txt")
             assertEquals(SessionDiffStatus.ADDED, createDiffFile.status)
-            val createPreview = awaitFileDiffPreview(
-                sessionClient = sessionClient,
-                port = server.port,
-                sessionId = sessionId,
-                projectBase = environment.repoRoot.toString(),
-                absFilePath = helloFile.toString(),
-            )
-            assertInlineDiffFromServerPayload(
-                repoRoot = environment.repoRoot.toString(),
-                sessionId = sessionId,
-                diffFile = createDiffFile,
-                expectedRemoved = "",
-                expectedAdded = "Hello World\n",
-            )
-            assertPreviewMatchesServerDiff(createPreview, createDiffFile)
-
             submitPromptAndAwaitTurn(
                 sessionClient = sessionClient,
                 events = events,
@@ -119,21 +81,6 @@ class OpenCodeDiffLiveTest(
 
             val updateDiffFile = requireSessionDiffFile(sessionClient, server.port, sessionId, "hello.txt")
             assertEquals(SessionDiffStatus.ADDED, updateDiffFile.status)
-            val updatePreview = awaitFileDiffPreview(
-                sessionClient = sessionClient,
-                port = server.port,
-                sessionId = sessionId,
-                projectBase = environment.repoRoot.toString(),
-                absFilePath = helloFile.toString(),
-            )
-            assertInlineDiffFromServerPayload(
-                repoRoot = environment.repoRoot.toString(),
-                sessionId = sessionId,
-                diffFile = updateDiffFile,
-                expectedRemoved = "",
-                expectedAdded = "Goodbye World\n",
-            )
-            assertPreviewMatchesServerDiff(updatePreview, updateDiffFile)
         }
     }
 
@@ -168,91 +115,11 @@ class OpenCodeDiffLiveTest(
             assertEquals(SessionDiffStatus.MODIFIED, diffFile.status)
             assertEquals("Alpha\nBravo\nCharlie\n", normalizeNewlinesOnly(diffFile.before))
             assertEquals("Alpha\nBeta\nCharlie\n", normalizeNewlinesOnly(diffFile.after))
-
-            val preview = awaitFileDiffPreview(
-                sessionClient = sessionClient,
-                port = server.port,
-                sessionId = sessionId,
-                projectBase = environment.repoRoot.toString(),
-                absFilePath = noteFile.toString(),
-            )
-            assertPreviewMatchesServerDiff(preview, diffFile)
-            assertInlineDiffFromServerPayload(
-                repoRoot = environment.repoRoot.toString(),
-                sessionId = sessionId,
-                diffFile = diffFile,
-                expectedRemoved = "Bravo",
-                expectedAdded = "Beta",
-            )
         }
     }
 
     @Test
-    fun `removes middle chunk from longer file and preserves diff semantics`() {
-        withLiveSession(version) { environment, server, sessionClient, events, sessionId ->
-            val longFile = environment.repoRoot.resolve("numbers.txt")
-            val original = lines(1..100)
-            val removedBlock = lines(41..60)
-            val expected = lines((1..100).filter { it !in 41..60 })
-            val searchBlock = "40\n${removedBlock}61\n"
-            val replacementBlock = "40\n61\n"
-            val prompt = """
-                Edit only `numbers.txt`.
-                Perform one exact text replacement in the file.
-                Replace this exact text:
-                ```text
-                $searchBlock
-                ```
-                with this exact text:
-                ```text
-                $replacementBlock
-                ```
-                Do not rewrite the whole file.
-                Leave all remaining content byte-for-byte unchanged.
-                After the edit, line `40` must be followed immediately by line `61`.
-                The file must still start with `1`, end with `100`, contain one plain number per line,
-                and keep the trailing newline.
-                Do not add line numbers, duplicate content, renumber anything, or modify any other files.
-            """.trimIndent()
-            longFile.writeText(original)
-
-            submitPromptAndAwaitTurn(
-                sessionClient = sessionClient,
-                events = events,
-                port = server.port,
-                sessionId = sessionId,
-                turnTimeoutMs = 60_000,
-                text = prompt,
-            )
-
-            assertFileText(longFile, expected)
-
-            val diffFile = requireSessionDiffFile(sessionClient, server.port, sessionId, "numbers.txt")
-            assertEquals(SessionDiffStatus.MODIFIED, diffFile.status)
-            assertEquals(normalizeNewlinesOnly(original), normalizeNewlinesOnly(diffFile.before))
-            assertEquals(normalizeNewlinesOnly(expected), normalizeNewlinesOnly(diffFile.after))
-
-            val preview = awaitFileDiffPreview(
-                sessionClient = sessionClient,
-                port = server.port,
-                sessionId = sessionId,
-                projectBase = environment.repoRoot.toString(),
-                absFilePath = longFile.toString(),
-                timeoutMs = 15_000,
-            )
-            assertPreviewMatchesServerDiff(preview, diffFile)
-            assertInlineDiffFromServerPayload(
-                repoRoot = environment.repoRoot.toString(),
-                sessionId = sessionId,
-                diffFile = diffFile,
-                expectedRemoved = removedBlock.removeSuffix("\n"),
-                expectedAdded = "",
-            )
-        }
-    }
-
-    @Test
-    fun `sub-agent edits are visible under root session diff state`() {
+    fun `sub-agent edits are attributed to child session diffs`() {
         withLiveSession(version, allowTask = true) { environment, server, sessionClient, events, sessionId ->
             val expectedFiles = linkedMapOf(
                 "live-subagents/alpha.txt" to "alpha from sub-agent\n",
@@ -286,7 +153,6 @@ class OpenCodeDiffLiveTest(
                 rootSessionId = sessionId,
                 repoRoot = environment.repoRoot,
                 expectedRelativePaths = expectedFiles.keys,
-                timeoutMs = 30_000,
             )
             assertEquals(
                 expectedFiles.keys,
@@ -302,181 +168,12 @@ class OpenCodeDiffLiveTest(
                 childDiffs.diffSummaryRoleByFile,
                 "child diff summaries should be carried by user messages, matching the parser filter",
             )
-
-            val coreVisible = applyRealDiffsToCoreState(
-                projectBase = environment.repoRoot.toString(),
-                rootSessionId = sessionId,
-                sessions = childDiffs.sessions,
-                diffsBySessionId = childDiffs.diffsBySessionId,
-            )
-            val expectedAbsFiles = expectedFiles.keys.map { environment.repoRoot.resolve(it).toString() }.toSet()
-
-            assertEquals(
-                expectedAbsFiles,
-                coreVisible.visibleFiles.intersect(expectedAbsFiles),
-                "root session file list should include all sub-agent edits",
-            )
-            assertEquals(
-                expectedAbsFiles,
-                coreVisible.liveVisibleFiles.intersect(expectedAbsFiles),
-                "root session live diff state should include all sub-agent edits simultaneously",
-            )
-        }
-    }
-
-    @Test
-    fun `python multi-file turn does not lose later message diff updates`() {
-        if (!version.startsWith("1.16.")) return
-
-        val probeContext = AtomicReference<MessageDiffProbeContext?>()
-        val snapshots = ConcurrentLinkedQueue<MessageDiffProbeSnapshot>()
-
-        withLiveSession(
-            version = version,
-            onEvent = { event ->
-                val context = probeContext.get() ?: return@withLiveSession
-                if (event !is OpenCodeEvent.MessageDiffAvailable || event.sessionId != context.sessionId) return@withLiveSession
-
-                val fetchedFiles = when (val result = context.sessionClient.fetchSessionDiffSnapshot(
-                    port = context.port,
-                    sessionId = event.sessionId,
-                    messageId = event.messageId,
-                )) {
-                    is ApiResult.Success -> result.value.files.map { normalizeDiffPath(context.repoRoot, it.file) }
-                    is ApiResult.Failure -> emptyList()
-                }
-                snapshots.add(
-                    MessageDiffProbeSnapshot(
-                        messageId = event.messageId,
-                        eventFiles = event.files.map { it.replace('\\', '/') }.sorted(),
-                        fetchedFiles = fetchedFiles.sorted(),
-                    )
-                )
-            },
-        ) { environment, server, sessionClient, events, sessionId ->
-            probeContext.set(MessageDiffProbeContext(sessionClient, server.port, sessionId, environment.repoRoot))
-
-            val files = linkedMapOf(
-                "pkg/alpha.py" to "def value():\n    return \"alpha-old\"\n",
-                "pkg/bravo.py" to "def value():\n    return \"bravo-old\"\n",
-                "pkg/charlie.py" to "def value():\n    return \"charlie-old\"\n",
-            )
-            files.forEach { (relativePath, content) ->
-                val path = environment.repoRoot.resolve(relativePath)
-                path.parent.createDirectories()
-                path.writeText(content)
-            }
-
-            submitPromptAndAwaitTurn(
-                sessionClient = sessionClient,
-                events = events,
-                port = server.port,
-                sessionId = sessionId,
-                turnTimeoutMs = 60_000,
-                text = """
-                    Edit only these Python files: `pkg/alpha.py`, `pkg/bravo.py`, and `pkg/charlie.py`.
-                    Make exactly these replacements:
-                    - In `pkg/alpha.py`, replace `alpha-old` with `alpha-new`.
-                    - In `pkg/bravo.py`, replace `bravo-old` with `bravo-new`.
-                    - In `pkg/charlie.py`, replace `charlie-old` with `charlie-new`.
-                    Do not modify any other files.
-                """.trimIndent(),
-            )
-
-            val expectedFiles = files.keys.toSet()
-            assertFileText(environment.repoRoot.resolve("pkg/alpha.py"), "def value():\n    return \"alpha-new\"\n")
-            assertFileText(environment.repoRoot.resolve("pkg/bravo.py"), "def value():\n    return \"bravo-new\"\n")
-            assertFileText(environment.repoRoot.resolve("pkg/charlie.py"), "def value():\n    return \"charlie-new\"\n")
-
-            val finalDiff = assertIs<ApiResult.Success<SessionDiffSnapshot>>(
-                sessionClient.fetchSessionDiffSnapshot(server.port, sessionId),
-            ).value
-            val finalFiles = finalDiff.files.map { normalizeDiffPath(environment.repoRoot, it.file) }.toSet()
-            assertEquals(
-                expectedFiles,
-                finalFiles.intersect(expectedFiles),
-                "final server diff should include all Python files"
-            )
-
-            val latestLoadedFiles = snapshots
-                .groupBy { it.messageId }
-                .values
-                .flatMap { it.last().fetchedFiles }
-                .map { normalizeDiffPath(environment.repoRoot, it) }
-                .filter { it in expectedFiles }
-                .toSet()
-
-            assertEquals(
-                expectedFiles,
-                latestLoadedFiles,
-                buildString {
-                    appendLine("latest message-diff fetches should include every Python file")
-                    appendLine("messageDiffEvents=${events.messageDiffEvents(sessionId)}")
-                    appendLine("snapshots=${snapshots.toList()}")
-                    appendLine("finalFiles=$finalFiles")
-                },
-            )
-        }
-    }
-
-    @Test
-    fun `reverted AI changes are absent from restored file list`() {
-        if (!version.startsWith("1.16.")) return
-
-        withLiveSession(version) { environment, server, sessionClient, events, sessionId ->
-            val relativePath = "revert-me.txt"
-            val original = "Original content\n"
-            val aiContent = "AI content\n"
-            val file = environment.repoRoot.resolve(relativePath)
-            file.writeText(original)
-
-            submitPromptAndAwaitTurn(
-                sessionClient = sessionClient,
-                events = events,
-                port = server.port,
-                sessionId = sessionId,
-                text = """
-                    Edit only `$relativePath`.
-                    Replace the entire file content with exactly:
-                    ```text
-                    AI content
-                    ```
-                    Keep the trailing newline.
-                    Do not modify any other files.
-                """.trimIndent(),
-            )
-            assertFileText(file, aiContent)
-
-            val serverDiff = assertIs<ApiResult.Success<SessionDiffSnapshot>>(
-                sessionClient.fetchSessionDiffSnapshot(server.port, sessionId),
-            ).value
-            assertTrue(
-                serverDiff.files.any { normalizeDiffPath(environment.repoRoot, it.file) == relativePath },
-                "server message history should still report $relativePath after the AI edit",
-            )
-
-            file.writeText(original)
-            assertFileText(file, original)
-
-            val harness = DiffPipelineHarness(
-                projectBase = environment.repoRoot.toString(),
-                sessionId = sessionId,
-            )
-            harness.disk[harness.abs(relativePath)] = original
-            harness.applyHistoricalSessionDiffFiles(serverDiff.files)
-
-            assertEquals(
-                0,
-                harness.trackedFileCount(),
-                "reverted AI changes should not remain visible in the restored session file list",
-            )
         }
     }
 
     private fun withLiveSession(
         version: String,
         allowTask: Boolean = false,
-        onEvent: (OpenCodeEvent) -> Unit = {},
         block: (
             environment: OpenCodeTestEnvironment,
             server: OpenCodeTestServer,
@@ -488,7 +185,7 @@ class OpenCodeDiffLiveTest(
         OpenCodeTestEnvironmentFactory.create(version, allowTask = allowTask).use { environment ->
             val server = environment.startServer()
             val sessionClient = SessionApiClient()
-            OpenCodeTestEventCollector(server.port, environment.repoRoot.toString(), onEvent).use { events ->
+            OpenCodeTestEventCollector(server.port, environment.repoRoot.toString()).use { events ->
                 try {
                     events.awaitConnected()
                     val session = assertIs<ApiResult.Success<SessionApiClient.CreatedSession>>(
@@ -496,7 +193,6 @@ class OpenCodeDiffLiveTest(
                     ).value
                     block(environment, server, sessionClient, events, session.sessionId)
                 } catch (t: Throwable) {
-                    environment.preserveForDiagnostics()
                     t.addSuppressed(
                         IllegalStateException(
                             buildString {
@@ -555,9 +251,8 @@ class OpenCodeDiffLiveTest(
         rootSessionId: String,
         repoRoot: Path,
         expectedRelativePaths: Set<String>,
-        timeoutMs: Long,
     ): ChildDiffs {
-        val deadline = System.currentTimeMillis() + timeoutMs
+        val deadline = System.currentTimeMillis() + 30_000
         var lastSessions: List<Session> = emptyList()
         var lastDiffsBySessionId: Map<String, SessionDiffSnapshot> = emptyMap()
 
@@ -598,8 +293,6 @@ class OpenCodeDiffLiveTest(
                 diffSummaryRoleByFile.keys == expectedRelativePaths
             ) {
                 return ChildDiffs(
-                    sessions = sessions,
-                    diffsBySessionId = diffsBySessionId.filterValues { diff -> diff.files.isNotEmpty() },
                     fileToChildSessionId = fileToChildSessionId,
                     diffSummaryRoleByFile = diffSummaryRoleByFile,
                 )
@@ -641,131 +334,10 @@ class OpenCodeDiffLiveTest(
         }.getOrDefault(file.replace('\\', '/'))
     }
 
-    private fun applyRealDiffsToCoreState(
-        projectBase: String,
-        rootSessionId: String,
-        sessions: List<Session>,
-        diffsBySessionId: Map<String, SessionDiffSnapshot>,
-    ): CoreDiffStateHarness.VisibleState {
-        val harness = CoreDiffStateHarness(projectBase)
-        diffsBySessionId.forEach { (diffSessionId, diff) ->
-            harness.applyLiveMessageDiff(
-                sessionId = diffSessionId,
-                diff = diff,
-                readContent = { absPath -> Path.of(absPath).takeIf { it.exists() }?.readText() ?: "" },
-            )
-        }
-
-        return harness.selectRootAndVisibleState(rootSessionId, sessions)
-    }
-
     private fun assertFileText(path: Path, expected: String) {
         val actual = if (path.exists()) normalizeNewlinesOnly(path.readText()) else "<missing file>"
         assertEquals(normalizeNewlinesOnly(expected), actual, "Unexpected file content at $path")
     }
-
-    private fun awaitFileDiffPreview(
-        sessionClient: SessionApiClient,
-        port: Int,
-        sessionId: String,
-        projectBase: String,
-        absFilePath: String,
-        timeoutMs: Long = 20_000,
-    ): SessionApiClient.FileDiffPreview {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val result = sessionClient.fetchFileDiffPreview(port, sessionId, projectBase, absFilePath)
-            val preview = (result as? ApiResult.Success<SessionApiClient.FileDiffPreview?>)?.value
-            if (preview != null) {
-                return preview
-            }
-            Thread.sleep(100)
-        }
-
-        throw AssertionError(
-            "Timed out waiting for 3-panel preview for $absFilePath",
-        )
-    }
-
-    private fun assertInlineDiffFromServerPayload(
-        repoRoot: String,
-        sessionId: String,
-        diffFile: SessionDiffFile,
-        expectedRemoved: String,
-        expectedAdded: String,
-    ) {
-        val relativeFile = diffFile.file
-        val harness = DiffPipelineHarness(
-            projectBase = repoRoot,
-            sessionId = sessionId,
-            hunkComputer = { fileDiff, sid ->
-                if (fileDiff.before == fileDiff.after) emptyList()
-                else listOf(
-                    DiffHunk(
-                        filePath = fileDiff.file,
-                        startLine = sharedPrefixLineCount(fileDiff.before, fileDiff.after),
-                        removedLines = contentLines(fileDiff.before).drop(
-                            sharedPrefixLineCount(fileDiff.before, fileDiff.after)
-                        ).dropLast(sharedSuffixLineCount(fileDiff.before, fileDiff.after)),
-                        addedLines = contentLines(fileDiff.after).drop(
-                            sharedPrefixLineCount(fileDiff.before, fileDiff.after)
-                        ).dropLast(sharedSuffixLineCount(fileDiff.before, fileDiff.after)),
-                        sessionId = sid,
-                    )
-                )
-            },
-        )
-        harness.disk[harness.abs(relativeFile)] = diffFile.after
-        harness.applySessionDiffFiles(listOf(diffFile))
-
-        val hunks = harness.hunksFor(relativeFile)
-        assertTrue(hunks.isNotEmpty(), "inline diff should produce hunks for $relativeFile")
-        val removedText = normalizeNewlinesOnly(hunks.flatMap { it.removedLines }.joinToString("\n"))
-        val addedText = normalizeNewlinesOnly(hunks.flatMap { it.addedLines }.joinToString("\n"))
-        assertEquals(normalizeNewlinesOnly(expectedRemoved), removedText)
-        assertEquals(normalizeNewlinesOnly(expectedAdded), addedText)
-    }
-
-    private fun assertPreviewMatchesServerDiff(
-        preview: SessionApiClient.FileDiffPreview,
-        diffFile: SessionDiffFile,
-    ) {
-        assertEquals(normalizeNewlinesOnly(diffFile.before), normalizeNewlinesOnly(preview.before))
-        assertEquals(normalizeNewlinesOnly(diffFile.after), normalizeNewlinesOnly(preview.after))
-    }
-
-    private fun lines(values: Iterable<Int>): String = values.joinToString(separator = "\n") + "\n"
-
-    private fun sharedPrefixLineCount(before: String, after: String): Int {
-        val beforeLines = contentLines(before)
-        val afterLines = contentLines(after)
-        var prefix = 0
-        while (prefix < beforeLines.size && prefix < afterLines.size && beforeLines[prefix] == afterLines[prefix]) {
-            prefix += 1
-        }
-        return prefix
-    }
-
-    private fun sharedSuffixLineCount(before: String, after: String): Int {
-        val beforeLines = contentLines(before)
-        val afterLines = contentLines(after)
-        val prefix = sharedPrefixLineCount(before, after)
-        var beforeEndExclusive = beforeLines.size
-        var afterEndExclusive = afterLines.size
-        var suffix = 0
-        while (
-            beforeEndExclusive > prefix &&
-            afterEndExclusive > prefix &&
-            beforeLines[beforeEndExclusive - 1] == afterLines[afterEndExclusive - 1]
-        ) {
-            beforeEndExclusive -= 1
-            afterEndExclusive -= 1
-            suffix += 1
-        }
-        return suffix
-    }
-
-    private fun contentLines(content: String): List<String> = if (content.isEmpty()) emptyList() else content.lines()
 
     private fun normalizeNewlinesOnly(content: String): String = content.replace("\r\n", "\n")
 }

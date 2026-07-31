@@ -74,7 +74,6 @@ class OpenCodeSessionStateLiveTest(
                         timeoutMs = 30_000,
                     )
                 } catch (t: Throwable) {
-                    environment.preserveForDiagnostics()
                     t.addSuppressed(
                         IllegalStateException(
                             buildString {

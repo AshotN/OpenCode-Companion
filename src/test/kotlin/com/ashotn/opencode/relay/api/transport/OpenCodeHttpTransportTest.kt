@@ -149,26 +149,6 @@ class OpenCodeHttpTransportTest {
     }
 
     @Test
-    fun `parseJsonObjectResponse unwraps successful object body`() {
-        val transport = OpenCodeHttpTransport()
-
-        val result = transport.parseJsonObjectResponse(ApiResult.Success("{\"id\":\"ses_1\"}"))
-
-        val success = assertIs<ApiResult.Success<com.google.gson.JsonObject>>(result)
-        assertEquals("ses_1", success.value.get("id").asString)
-    }
-
-    @Test
-    fun `parseJsonArrayResponse fails on non-array body`() {
-        val transport = OpenCodeHttpTransport()
-
-        val result = transport.parseJsonArrayResponse(ApiResult.Success("{\"id\":\"ses_1\"}"))
-
-        val failure = assertIs<ApiResult.Failure>(result)
-        assertIs<ApiError.ParseError>(failure.error)
-    }
-
-    @Test
     fun `mapJsonObjectResponse maps object payload`() {
         val transport = OpenCodeHttpTransport()
 

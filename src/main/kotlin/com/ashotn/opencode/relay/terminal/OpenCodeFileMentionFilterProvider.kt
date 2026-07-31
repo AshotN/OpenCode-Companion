@@ -8,7 +8,7 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import java.io.File
 
-/** Makes OpenCode's structured @path#Lline and @directory/ mentions navigable. */
+/** Makes OpenCode's local file references and structured @ mentions navigable. */
 class OpenCodeFileMentionFilterProvider : ConsoleFilterProvider {
     override fun getDefaultFilters(project: Project): Array<Filter> =
         arrayOf(createOpenCodeFileMentionFilter(project))
@@ -21,21 +21,36 @@ private class OpenCodeFileMentionFilter(project: Project) :
     AbstractFileHyperlinkFilter(project, project.basePath),
     DumbAware {
     private val projectBasePath = project.basePath
+    private val localFileReferenceMatcher = LocalFileReferenceMatcher(project)
 
     override fun parse(line: String): List<FileHyperlinkRawData> {
-        if (line.length > MAX_LINE_LENGTH || '@' !in line) return emptyList()
+        if (line.length > MAX_LINE_LENGTH) return emptyList()
 
         val links = mutableListOf<FileHyperlinkRawData>()
-        fileMentionRegex.findAll(line).forEach { match ->
-            val (path, lineText) = match.destructured
-            val lineNumber = lineText.toIntOrNull() ?: return@forEach
-            links += createLinkData(path, lineNumber - 1, match.range)
+        if ('@' in line) {
+            fileMentionRegex.findAll(line).forEach { match ->
+                val (path, lineText) = match.destructured
+                val lineNumber = lineText.toIntOrNull() ?: return@forEach
+                links += createLinkData(path, lineNumber - 1, match.range)
+            }
+            directoryMentionRegex.findAll(line).forEach { match ->
+                val (path) = match.destructured
+                links += createLinkData(path, -1, match.range)
+            }
         }
-        directoryMentionRegex.findAll(line).forEach { match ->
-            val (path) = match.destructured
-            links += createLinkData(path, -1, match.range)
+
+        localFileReferenceMatcher.findAll(line).forEach { target ->
+            links += FileHyperlinkRawData(
+                target.path,
+                target.lineNumberOneBased?.minus(1) ?: -1,
+                -1,
+                target.sourceStartOffset,
+                target.sourceEndOffset,
+            )
         }
-        return links.sortedBy { it.hyperlinkStartInd }
+        return links
+            .distinctBy { it.hyperlinkStartInd to it.hyperlinkEndInd }
+            .sortedBy { it.hyperlinkStartInd }
     }
 
     private fun createLinkData(path: String, lineNumber: Int, range: IntRange): FileHyperlinkRawData {
