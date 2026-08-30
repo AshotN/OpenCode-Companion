@@ -18,6 +18,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
@@ -25,8 +26,10 @@ import com.jediterm.core.util.TermSize
 import kotlinx.coroutines.launch
 import org.jetbrains.plugins.terminal.ShellStartupOptions
 import java.awt.BorderLayout
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
+import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
@@ -35,7 +38,7 @@ import javax.swing.JPanel
  * Uses the experimental [TerminalToolWindowTabsManager] API to create a detached terminal
  * session that is never shown or persisted in the native Terminal tool window. Correct
  * detached-session persistence requires IntelliJ Platform 2026.2 or newer. The
- * [TerminalView.component] is embedded in the panel's [BorderLayout.CENTER].
+ * detached terminal component is embedded in the panel's [BorderLayout.CENTER].
  *
  * The terminal is started lazily on the first call to [startIfNeeded] and lives
  * for as long as this panel's parent [Disposable] is alive.
@@ -48,6 +51,8 @@ class ReworkedTuiPanel(
 ) : JPanel(BorderLayout()), TuiPanel, Disposable {
 
     private var terminalView: TerminalView? = null
+    private var terminalComponent: JComponent? = null
+    private var terminalContentOwner: Disposable? = null
     private var fileDropDisposable: Disposable? = null
     private var hyperlinkMouseGuard: Disposable? = null
     private var osc52Session: ReworkedOsc52Session? = null
@@ -134,18 +139,17 @@ class ReworkedTuiPanel(
 
             // Notify the backend that this directly-created tab is externally owned so it
             // is excluded from native Terminal persistence.
-            var detached = false
-            val view = try {
-                manager.detachTab(tab).also {
-                    detached = true
-                }
-            } finally {
-                if (!detached) {
-                    Disposer.dispose(tab.content as Disposable)
-                }
+            val detachedTerminal = try {
+                detachTerminalTab(manager, tab)
+            } catch (failure: Throwable) {
+                Disposer.dispose(tab.content as Disposable)
+                throw failure
             }
+            val view = detachedTerminal.view
             terminalView = view
-            hyperlinkMouseGuard = installTerminalHyperlinkMouseGuard(view.component)
+            terminalComponent = detachedTerminal.component
+            terminalContentOwner = detachedTerminal.contentOwner
+            hyperlinkMouseGuard = installTerminalHyperlinkMouseGuard(detachedTerminal.component)
             installFileDropTarget(view)
 
             // Watch sessionState flow: when Terminated the shell has exited.
@@ -163,7 +167,7 @@ class ReworkedTuiPanel(
                 }
             }
 
-            add(view.component, BorderLayout.CENTER)
+            add(detachedTerminal.component, BorderLayout.CENTER)
             revalidate()
             repaint()
 
@@ -221,9 +225,32 @@ class ReworkedTuiPanel(
             .install()
     }
 
+    private fun detachTerminalTab(
+        manager: TerminalToolWindowTabsManager,
+        tab: TerminalToolWindowTab,
+    ): DetachedTerminal {
+        val result = try {
+            TerminalToolWindowTabsManager::class.java
+                .getMethod("detachTab", TerminalToolWindowTab::class.java)
+                .invoke(manager, tab)
+        } catch (failure: InvocationTargetException) {
+            throw failure.targetException
+        }
+
+        return if (result is TerminalView) {
+            DetachedTerminal(result, result.component, null)
+        } else {
+            DetachedTerminal(tab.view, tab.content.component, tab.content as Disposable)
+        }
+    }
+
     private fun tearDown() {
         val view = terminalView
         terminalView = null
+        val component = terminalComponent
+        terminalComponent = null
+        val contentOwner = terminalContentOwner
+        terminalContentOwner = null
         val dropTarget = fileDropDisposable
         fileDropDisposable = null
         val mouseGuard = hyperlinkMouseGuard
@@ -243,12 +270,17 @@ class ReworkedTuiPanel(
             }
         } finally {
             if (view != null) {
-                // Detaching transfers ownership from the Terminal tool window to this panel.
-                // Cancel the view scope to terminate the process and release the frontend session.
-                view.coroutineScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
-                remove(view.component)
-                revalidate()
-                repaint()
+                try {
+                    if (contentOwner != null) {
+                        Disposer.dispose(contentOwner)
+                    } else {
+                        view.coroutineScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+                    }
+                } finally {
+                    component?.let(::remove)
+                    revalidate()
+                    repaint()
+                }
             }
         }
     }
@@ -260,4 +292,10 @@ class ReworkedTuiPanel(
     companion object {
         private val logger = Logger.getInstance(ReworkedTuiPanel::class.java)
     }
+
+    private data class DetachedTerminal(
+        val view: TerminalView,
+        val component: JComponent,
+        val contentOwner: Disposable?,
+    )
 }
