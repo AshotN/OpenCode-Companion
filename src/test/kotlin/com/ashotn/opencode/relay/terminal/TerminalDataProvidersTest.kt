@@ -10,8 +10,10 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.awt.BorderLayout
+import java.awt.Cursor
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
+import java.awt.event.MouseEvent
 import java.io.File
 import java.lang.reflect.Proxy
 import javax.swing.JPanel
@@ -59,6 +61,21 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
         assertFalse(consumeEmbeddedTerminalControlKey(escape))
     }
 
+    fun `test terminal hyperlink mouse guard suppresses press and release but preserves click`() {
+        val root = JPanel()
+        val link = JPanel().apply { cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) }
+        root.add(link)
+        val guard = TerminalHyperlinkMouseGuard(root)
+
+        assertTrue(guard.dispatch(mouseEvent(link, MouseEvent.MOUSE_PRESSED)))
+        assertTrue(guard.dispatch(mouseEvent(link, MouseEvent.MOUSE_RELEASED)))
+        assertFalse(guard.dispatch(mouseEvent(link, MouseEvent.MOUSE_CLICKED)))
+
+        link.cursor = Cursor.getDefaultCursor()
+        assertFalse(guard.dispatch(mouseEvent(link, MouseEvent.MOUSE_PRESSED)))
+        assertFalse(guard.dispatch(mouseEvent(link, MouseEvent.MOUSE_RELEASED)))
+    }
+
     fun `test local file reference matcher contract`() {
         data class Case(
             val line: String,
@@ -83,6 +100,7 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
             Case("See src/main/Example.kt:42;", "src/main/Example.kt:42", nested, 42),
             Case("See ./encoded%20name.md", "./encoded%20name.md", encoded, null),
             Case("See ./literal!?", "./literal!", punctuated, null),
+            Case("See [./README.md](https://example.test)", "./README.md", readme, null),
             Case("Open ./local-directory/.", "./local-directory/", directory, null),
         ) + listOf('.', ',', ':', ';', '!', '?').map { punctuation ->
             Case("See $targetWithLine$punctuation", targetWithLine, readme, 2)
@@ -103,6 +121,36 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
             "See ${readme.toURI()}",
             "See @src/main/Example.kt#L2",
         ).forEach { line -> assertTrue(matcher.findAll(line).isEmpty()) }
+    }
+
+    /*
+     * File references containing framework-defined route segments must be clickable in the terminal
+     * and open the referenced file at the requested line.
+     *
+     * MANUAL VERIFICATION:
+     *   1. Open a project containing a route file under a `-(parts)` or `[itemId]` folder.
+     *   2. Ask OpenCode to print that file's project-relative path with a line-number suffix.
+     *   3. Click the printed path and confirm the file opens at the requested line.
+     */
+    fun `test local file reference matcher resolves framework route segments`() {
+        val paths = listOf(
+            "src/routes/_zone/items/add/-(parts)/review.ts",
+            "src/app/items/[itemId]/page.tsx",
+        )
+
+        paths.forEach { path ->
+            val file = createProjectFile(path, (1..150).joinToString("\n") { "line $it" })
+            assertNotNull(LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file))
+            val target = "./$path:141"
+            val line = "- $target"
+
+            val result = LocalFileReferenceMatcher(project).findAll(line).single()
+
+            assertEquals(file.path, result.virtualFile.path)
+            assertEquals(141, result.lineNumberOneBased)
+            assertEquals(line.indexOf(target), result.sourceStartOffset)
+            assertEquals(line.indexOf(target) + target.length, result.sourceEndOffset)
+        }
     }
 
     fun `test Classic adapter maps local file reference to JediTerm link`() {
@@ -218,6 +266,9 @@ class TerminalDataProvidersTest : BasePlatformTestCase() {
             parentFile.mkdirs()
             writeText(content)
         }
+
+    private fun mouseEvent(source: JPanel, id: Int): MouseEvent =
+        MouseEvent(source, id, 0, 0, 0, 0, 1, false, MouseEvent.BUTTON1)
 
     private data class VirtualFileAndLine(
         val path: String,

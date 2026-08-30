@@ -49,6 +49,7 @@ class ReworkedTuiPanel(
 
     private var terminalView: TerminalView? = null
     private var fileDropDisposable: Disposable? = null
+    private var hyperlinkMouseGuard: Disposable? = null
     private var osc52Session: ReworkedOsc52Session? = null
 
     init {
@@ -145,6 +146,7 @@ class ReworkedTuiPanel(
                 }
             }
             terminalView = view
+            hyperlinkMouseGuard = installTerminalHyperlinkMouseGuard(view.component)
             installFileDropTarget(view)
 
             // Watch sessionState flow: when Terminated the shell has exited.
@@ -225,12 +227,18 @@ class ReworkedTuiPanel(
         terminalView = null
         val dropTarget = fileDropDisposable
         fileDropDisposable = null
+        val mouseGuard = hyperlinkMouseGuard
+        hyperlinkMouseGuard = null
         val session = osc52Session
         osc52Session = null
 
         try {
             try {
-                dropTarget?.let { Disposer.dispose(it) }
+                try {
+                    mouseGuard?.let { Disposer.dispose(it) }
+                } finally {
+                    dropTarget?.let { Disposer.dispose(it) }
+                }
             } finally {
                 session?.let { Disposer.dispose(it) }
             }

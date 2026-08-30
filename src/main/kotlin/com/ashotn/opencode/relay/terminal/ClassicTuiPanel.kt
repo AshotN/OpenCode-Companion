@@ -57,6 +57,7 @@ class ClassicTuiPanel(
 
     private var terminalWidget: TerminalWidget? = null
     private var terminalPanel: JBTerminalPanel? = null
+    private var hyperlinkMouseGuard: Disposable? = null
 
     init {
         Disposer.register(parentDisposable, this)
@@ -112,6 +113,7 @@ class ClassicTuiPanel(
                 ShellTerminalWidget.asShellJediTermWidget(widget)?.terminalPanel
                     ?.also { panel ->
                         installEmbeddedTerminalDataProvider(project, panel)
+                        hyperlinkMouseGuard = installTerminalHyperlinkMouseGuard(panel)
                         installFileDropTarget(panel)
                         installClipboardFilePasteHandler(panel)
                     }
@@ -171,6 +173,8 @@ class ClassicTuiPanel(
     override fun dispose() = tearDown()
 
     private fun uninstallEmbeddedTerminalIntegrations() {
+        hyperlinkMouseGuard?.let { Disposer.dispose(it) }
+        hyperlinkMouseGuard = null
         terminalPanel?.let { panel ->
             uninstallEmbeddedTerminalDataProvider(panel)
             panel.dropTarget = null

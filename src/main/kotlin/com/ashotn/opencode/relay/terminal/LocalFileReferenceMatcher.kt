@@ -13,9 +13,10 @@ internal class LocalFileReferenceMatcher(project: Project) {
     fun findAll(line: String): List<ResolvedLocalFileReference> {
         if ('/' !in line) return emptyList()
 
-        return localFileReferenceRegex.findAll(line).mapNotNull { match ->
-            val group = match.groups[1] ?: return@mapNotNull null
-            resolve(group.value, group.range.first)
+        return localFileReferenceStartRegex.findAll(line).mapNotNull { match ->
+            val sourceStartOffset = match.range.first
+            val sourceEndOffset = findReferenceEnd(line, match.range.last + 1)
+            resolve(line.substring(sourceStartOffset, sourceEndOffset), sourceStartOffset)
         }.toList()
     }
 
@@ -69,7 +70,34 @@ private fun parseLineSuffix(target: String): Pair<String, Int?> {
     return if (lineNumber != null && lineNumber > 0) target.substring(0, separator) to lineNumber else target to null
 }
 
-private val localFileReferenceRegex =
-    Regex("""(?<![\w@./:-])((?:\.{1,2}/|/|[\w.-]+/)[^\s\[\]()<>"|]+)(?![\w./-])""")
+private fun findReferenceEnd(line: String, contentStart: Int): Int {
+    var index = contentStart
+    while (index < line.length) {
+        index = when (line[index]) {
+            '[', '(' -> findRouteSegmentEnd(line, index) ?: return index
+            ']', ')', '<', '>', '"', '|' -> return index
+            else -> if (line[index].isWhitespace()) return index else index + 1
+        }
+    }
+    return index
+}
 
+private fun findRouteSegmentEnd(line: String, start: Int): Int? {
+    val closingToken = when {
+        line.startsWith("[[", start) -> "]]"
+        line[start] == '[' -> "]"
+        else -> ")"
+    }
+    val contentStart = start + closingToken.length
+    var index = contentStart
+    while (index < line.length) {
+        if (line.startsWith(closingToken, index)) return (index + closingToken.length).takeIf { index > contentStart }
+        if (line[index].isWhitespace() || line[index] in routeSegmentDelimiters) return null
+        index++
+    }
+    return null
+}
+
+private val localFileReferenceStartRegex = Regex("""(?<![\w@./:-])(?:\.{1,2}/|/|[\w.-]+/)""")
 private val trailingReferencePunctuation = setOf('.', ',', ':', ';', '!', '?')
+private val routeSegmentDelimiters = setOf('/', '[', ']', '(', ')', '<', '>', '"', '|')
