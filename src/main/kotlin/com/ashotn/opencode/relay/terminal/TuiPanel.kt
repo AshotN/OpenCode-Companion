@@ -7,11 +7,12 @@ import javax.swing.JPanel
  * Common contract for the embeddable terminal panel that runs
  * `opencode attach <server-url>` inside the tool window.
  *
+ * Two implementations exist:
+ * - [ClassicTuiPanel] backed by the classic JediTerm widget
+ * - [ReworkedTuiPanel] backed by the TerminalToolWindowTabsManager API
+ *
  * The active implementation is chosen by
  * [com.ashotn.opencode.relay.settings.OpenCodeSettings.terminalEngine].
- *
- * The reworked implementation is currently parked and excluded from the build,
- * so the runtime always uses [ClassicTuiPanel].
  */
 interface TuiPanel : Disposable {
     /** The Swing component to embed in the tool window. */

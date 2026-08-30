@@ -10,11 +10,5 @@
   "permission": {
     "jetbrains_execute_terminal_command": "ask",
     "jetbrains_execute_run_configuration": "allow"
-  },
-  "agent": {
-    "explore": {
-      "mode": "subagent",
-      "model": "openai/gpt-5.4-mini"
-    }
   }
 }

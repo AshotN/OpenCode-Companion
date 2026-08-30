@@ -13,12 +13,17 @@ import com.ashotn.opencode.relay.permission.OpenCodePermissionService
 import com.ashotn.opencode.relay.settings.OpenCodeSettings
 import com.ashotn.opencode.relay.settings.OpenCodeSettings.TerminalEngine
 import com.ashotn.opencode.relay.settings.OpenCodeSettingsChangedListener
+import com.ashotn.opencode.relay.settings.effectiveForIde
 import com.ashotn.opencode.relay.terminal.ClassicTuiPanel
+import com.ashotn.opencode.relay.terminal.ReworkedTuiPanel
 import com.ashotn.opencode.relay.terminal.TuiPanel
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.wm.ToolWindow
+import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -35,6 +40,7 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     companion object {
         private const val CARD_CONTENT = "content"
         private const val CARD_PENDING = "pending"
+        private const val TOOL_WINDOW_ID = "OpenCode Relay"
 
         /** Installs a theme-adaptive, 1px divider on [pane] so it matches the IDE border color. */
         fun applyThemedDivider(pane: JSplitPane) {
@@ -58,12 +64,12 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     private val mcpWarningPanel = JetBrainsMcpWarningPanel(project)
     private val pendingFilesPanel = PendingFilesPanel(project, this)
     private var tuiPanel: TuiPanel = createTuiPanel()
-    private var activeTuiEngine: TerminalEngine =
-        effectiveTerminalEngine(OpenCodeSettings.getInstance(project).terminalEngine)
+    private var activeTuiEngine: TerminalEngine = configuredTuiEngine()
     private val syncScheduled = AtomicBoolean(false)
     private val plugin = OpenCodePlugin.getInstance(project)
     private val serverStateListener = ServerStateListener { requestSyncCard() }
     private var expandedDividerLocation: Int? = null
+    private var disposed = false
 
     // Split pane that stacks content (top) and TUI (bottom).
     // The TUI half is hidden until the server is READY.
@@ -108,6 +114,15 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
             PermissionChangedListener { requestSyncCard() }
         )
 
+        project.messageBus.connect(this).subscribe(
+            ToolWindowManagerListener.TOPIC,
+            object : ToolWindowManagerListener {
+                override fun toolWindowShown(toolWindow: ToolWindow) {
+                    if (toolWindow.id == TOOL_WINDOW_ID) requestSyncCard()
+                }
+            }
+        )
+
         plugin.addListener(serverStateListener)
 
         project.messageBus.connect(this).subscribe(
@@ -133,10 +148,11 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
     }
 
     private fun requestSyncCard() {
+        if (disposed || project.isDisposed) return
         if (!syncScheduled.compareAndSet(false, true)) return
         ApplicationManager.getApplication().invokeLater {
             syncScheduled.set(false)
-            syncCard()
+            if (!disposed && !project.isDisposed) syncCard()
         }
     }
 
@@ -144,9 +160,15 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         val settings = OpenCodeSettings.getInstance(project)
         val serverReady = plugin.serverState == ServerState.READY
         val inlineTerminal = serverReady && settings.inlineTerminalEnabled
+        val toolWindowVisible = ToolWindowManager.getInstance(project)
+            .getToolWindow(TOOL_WINDOW_ID)
+            ?.isVisible == true
+
+        if (inlineTerminal && !tuiPanel.isStarted && toolWindowVisible) {
+            tuiPanel.startIfNeeded()
+        }
 
         if (inlineTerminal) {
-            tuiPanel.startIfNeeded()
             if (tuiPanel.isStarted) {
                 if (!settings.sessionsSectionVisible) {
                     if (splitPane.dividerSize > 0) {
@@ -212,7 +234,7 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
      * it into the split pane — all without requiring an IDE restart.
      */
     private fun swapTuiPanelIfEngineChanged() {
-        val configuredEngine = effectiveTerminalEngine(OpenCodeSettings.getInstance(project).terminalEngine)
+        val configuredEngine = configuredTuiEngine()
         if (configuredEngine == activeTuiEngine) return
 
         // Stop and dispose the old panel.
@@ -244,18 +266,15 @@ class OpenCodeToolWindowPanel(private val project: Project) : JPanel(BorderLayou
         repaint()
     }
 
-    /**
-     * Creates the terminal panel for the currently configured [OpenCodeSettings.terminalEngine].
-     * The reworked implementation is parked and currently resolved to [ClassicTuiPanel].
-     */
+    /** Creates the terminal panel for the configured [OpenCodeSettings.terminalEngine]. */
     private fun createTuiPanel(): TuiPanel =
-        ClassicTuiPanel(project, this, onTerminated = { requestSyncCard() })
+        when (configuredTuiEngine()) {
+            TerminalEngine.CLASSIC -> ClassicTuiPanel(project, this, onTerminated = { requestSyncCard() })
+            TerminalEngine.REWORKED -> ReworkedTuiPanel(project, this, onTerminated = { requestSyncCard() })
+        }
 
-    private fun effectiveTerminalEngine(requested: TerminalEngine): TerminalEngine =
-        if (requested == TerminalEngine.REWORKED) TerminalEngine.CLASSIC else requested
-
-
-    private var disposed = false
+    private fun configuredTuiEngine(): TerminalEngine =
+        OpenCodeSettings.getInstance(project).terminalEngine.effectiveForIde()
 
     override fun dispose() {
         if (disposed) return

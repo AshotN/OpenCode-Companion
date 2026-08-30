@@ -152,7 +152,6 @@ class OpenCodeTestEnvironment(
 
     private val healthApiClient = HealthApiClient()
     private var server: OpenCodeTestServer? = null
-    private var preserveOnClose = false
 
     fun startServer(timeoutMs: Long = 15_000): OpenCodeTestServer {
         check(server == null) { "Scenario environment already has a running server" }
@@ -217,13 +216,7 @@ class OpenCodeTestEnvironment(
     override fun close() {
         server?.close()
         server = null
-        if (!preserveOnClose) {
-            scenarioRoot.deleteRecursively()
-        }
-    }
-
-    fun preserveForDiagnostics() {
-        preserveOnClose = true
+        scenarioRoot.deleteRecursively()
     }
 
     fun diagnosticsSummary(maxLogLines: Int = 40): String = buildString {

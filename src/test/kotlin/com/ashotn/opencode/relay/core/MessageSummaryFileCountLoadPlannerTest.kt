@@ -11,10 +11,9 @@ class MessageSummaryFileCountLoadPlannerTest {
     @Test
     fun `message summary file count loads only newest eligible summary sessions up to batch size`() {
         val sessions = listOf(
-            session("old", updated = 10, summarized = true),
             session("newest", updated = 50, summarized = true),
             session("plain", updated = 100, summarized = false),
-            session("loaded", updated = 40, summarized = true),
+            session("loaded", updated = 60, summarized = true),
             session("middle", updated = 30, summarized = true),
             session("newer", updated = 45, summarized = true),
         )

@@ -146,22 +146,6 @@ class DiffPipelineHarness(
     fun baseline(relPath: String): String? =
         stateStore.baselineBeforeBySessionAndFile[sessionId]?.get(abs(relPath))
 
-    fun selectCurrentSession() {
-        stateStore.commitSelectedSession(
-            stateLock = stateLock,
-            requestedSessionId = sessionId,
-            sessionExists = { true },
-        )
-    }
-
-    fun selectedSessionId(): String? = stateStore.selectedSessionId
-
-    fun resetState() {
-        stateStore.resetState()
-    }
-
-    fun stateStoreForAssertions(): Any = stateStore
-
     fun reconcileCurrentState() {
         val snapshot = stateStore.snapshotSessionReconcileState(
             stateLock = stateLock,

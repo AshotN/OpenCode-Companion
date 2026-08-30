@@ -10,7 +10,7 @@
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
-    <depends optional="true" config-file="withTerminal.xml">org.jetbrains.plugins.terminal</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
     <depends optional="true" config-file="withJetBrainsMcp.xml">com.intellij.mcpServer</depends>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -28,6 +28,13 @@
         />
         <notificationGroup id="OpenCode Relay" displayType="BALLOON" key="notification.group.opencode"/>
         <backgroundPostStartupActivity implementation="com.ashotn.opencode.relay.OpenCodeStartupActivity"/>
+        <consoleFilterProvider
+                implementation="com.ashotn.opencode.relay.terminal.OpenCodeFileMentionFilterProvider"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="org.jetbrains.plugins.terminal">
+        <allowedActionsProvider
+                implementation="com.ashotn.opencode.relay.terminal.NewSessionTerminalAllowedActionsProvider"/>
     </extensions>
 
     <actions>

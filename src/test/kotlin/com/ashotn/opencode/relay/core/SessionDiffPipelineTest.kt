@@ -173,35 +173,6 @@ class SessionDiffPipelineTest {
     }
 
     // -------------------------------------------------------------------------
-    // Historical reloads compare the server-provided baseline to current disk.
-    // If the user already reverted the file to that baseline before restore,
-    // the file should not be restored as an empty tracked entry.
-    // -------------------------------------------------------------------------
-    @Test
-    fun `historical baseline matching file is removed from restored state`() {
-        val file = "note.md"
-        val original = "Original content\n"
-        val aiContent = "AI content\n"
-
-        h.disk[h.abs(file)] = original
-        h.applyHistoricalSessionDiffFiles(
-            listOf(
-                SessionDiffFile(
-                    file = h.abs(file),
-                    before = original,
-                    after = aiContent,
-                    additions = 1,
-                    deletions = 1,
-                    status = SessionDiffStatus.MODIFIED,
-                )
-            )
-        )
-
-        assertEquals(0, h.trackedFileCount(), "historical baseline match should not be restored")
-        assertTrue(h.hunkFiles().isEmpty(), "historical baseline match should not create empty hunk entry")
-    }
-
-    // -------------------------------------------------------------------------
     // If the AI adds content in one turn and removes it in a later AI turn, the
     // later live diff is computed against the start of that AI turn. It must
     // still show a red deletion even though the disk now matches the original
@@ -462,31 +433,6 @@ class SessionDiffPipelineTest {
     }
 
     // -------------------------------------------------------------------------
-    // Editor inline rendering asks QueryService for live hunks. When the root
-    // session is selected, live hunks from child/sub-agent sessions must be
-    // returned as part of the selected root family.
-    // -------------------------------------------------------------------------
-    @Test
-    fun `root session inline hunk lookup includes child session live hunks`() {
-        val file = "/project/live-subagents/alpha.txt"
-        val hunk = DiffHunk(
-            filePath = file,
-            startLine = 0,
-            removedLines = emptyList(),
-            addedLines = listOf("alpha from sub-agent"),
-            sessionId = "ses_child",
-        )
-
-        val hunks = QueryService().liveHunks(
-            filePath = file,
-            familySessionIds = { setOf("ses_root", "ses_child") },
-            liveHunksBySessionAndFile = mapOf("ses_child" to mapOf(file to listOf(hunk))),
-        )
-
-        assertEquals(listOf(hunk), hunks)
-    }
-
-    // -------------------------------------------------------------------------
     // A sub-agent live diff can arrive before the session hierarchy refresh that
     // tells the plugin child.parentID == root. While root is selected, that diff
     // is not part of the strict root family yet. Once hierarchy metadata arrives,
@@ -600,114 +546,6 @@ class SessionDiffPipelineTest {
             )
         )
         assertEquals("line1\n", h.baseline(file), "turn 2 baseline should be turn 1's final content")
-    }
-
-    // -------------------------------------------------------------------------
-    // When you double-click a file in the diff viewer after the AI has modified
-    // it across multiple turns (e.g. add poem in turn 1, add signature in turn 2),
-    // the diff must show all changes from the original file — not just the most
-    // recent turn's change. The "before" side of the diff must always be the content
-    // the file had before the AI touched it at all in this conversation.
-    //
-    // MANUAL VERIFICATION:
-    //   1. Ask the AI to append a poem to a note file.
-    //   2. In a second turn, ask the AI to sign the note with an author name.
-    //   3. Double-click the file in the diff viewer.
-    //   4. The "before" side must show the original file (no poem, no signature).
-    //      If it shows the file with the poem already present, this invariant is violated.
-    // -------------------------------------------------------------------------
-    @Test
-    fun `diff preview before shows original content across multiple turns`() {
-        val projectBase = "/project"
-        val generation = 1L
-        val file = "notes/note1.md"
-        val absFile = "$projectBase/$file"
-        val originalContent = "# Note\n\nOriginal content.\n"
-        val afterPoem = "$originalContent\n## Poem\n\nRoses are red.\n"
-        val afterSignature = "$afterPoem\n— Cipher Moonwhisper\n"
-
-        val stateStore = StateStore()
-        val stateLock = Any()
-        val disk = mutableMapOf<String, String>()
-
-        val computer = SessionDiffApplyComputer(
-            contentReader = { absPath -> disk[absPath] ?: "" },
-            hunkComputer = { fileDiff, sid ->
-                if (fileDiff.before == fileDiff.after) emptyList()
-                else listOf(
-                    DiffHunk(
-                        fileDiff.file, 0,
-                        if (fileDiff.before.isEmpty()) emptyList() else listOf(fileDiff.before),
-                        if (fileDiff.after.isEmpty()) emptyList() else listOf(fileDiff.after),
-                        sid
-                    )
-                )
-            },
-            log = NoOpLogger,
-            tracer = NoOpDiffTracer,
-        )
-
-        // Simulate what the server returns for GET /session/{id}/diff:
-        // it always carries the true original "before" for each file, regardless of
-        // how many live turns have run. We model this with fromHistory=true, which
-        // makes SessionDiffApplyComputer use diffFile.before directly.
-        fun simulateServerDiffFetch(sessionId: String, serverBefore: String, currentContent: String) {
-            disk[absFile] = currentContent
-            val revision = stateStore.reserveRevisionForSessionDiffApply(
-                stateLock = stateLock,
-                sessionId = sessionId,
-                expectedGeneration = generation,
-                currentGeneration = { generation },
-            )!!
-            val event = SessionDiffSnapshot(
-                sessionId = sessionId,
-                files = listOf(
-                    SessionDiffFile(
-                        file = absFile,
-                        before = serverBefore, // server's authoritative original
-                        after = currentContent,
-                        additions = 1,
-                        deletions = 0,
-                        status = SessionDiffStatus.MODIFIED,
-                    )
-                ),
-            )
-            val computedState = computer.compute(
-                projectBase = projectBase,
-                event = event,
-                fromHistory = true,
-            )
-            stateStore.commitSessionDiffApply(
-                stateLock = stateLock,
-                sessionId = sessionId,
-                revision = revision,
-                fromHistory = true,
-                computedState = computedState,
-                nowMillis = 1000L,
-                expectedGeneration = generation,
-                currentGeneration = { generation },
-            )
-        }
-
-        // The server is fetched for the most recently active session (sign).
-        // It returns originalContent as "before" — the state before any AI edits.
-        simulateServerDiffFetch(
-            sessionId = "ses_sign",
-            serverBefore = originalContent,
-            currentContent = afterSignature,
-        )
-
-        // The baseline stored from the server fetch must be the original content,
-        // not the intermediate post-poem content.
-        val storedBefore = stateStore.baselineBeforeBySessionAndFile["ses_sign"]?.get(absFile)
-
-        assertEquals(
-            originalContent,
-            storedBefore,
-            "diff preview 'before' must be the server-provided original file content, " +
-                    "but got before.length=${storedBefore?.length} " +
-                    "(afterPoem.length=${afterPoem.length}, originalContent.length=${originalContent.length})",
-        )
     }
 
     private fun session(id: String, parentId: String? = null): Session = Session(

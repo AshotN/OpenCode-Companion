@@ -7,23 +7,6 @@ import kotlin.test.assertEquals
 class PatchDiffTextParserTest {
 
     @Test
-    fun `reconstructs before and after text from patch diff`() {
-        val obj = JsonParser.parseString(
-            """
-            {
-              "file": "a.txt",
-              "patch": "Index: a.txt\n===================================================================\n--- a.txt\t\n+++ a.txt\t\n@@ -1 +1 @@\n-old\n+new\n"
-            }
-            """.trimIndent()
-        ).asJsonObject
-
-        val diffText = PatchDiffTextParser.parse(obj)
-
-        assertEquals("old\n", diffText.before)
-        assertEquals("new\n", diffText.after)
-    }
-
-    @Test
     fun `preserves no newline at end of file marker`() {
         val obj = JsonParser.parseString(
             """

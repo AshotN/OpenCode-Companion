@@ -225,8 +225,13 @@ class OpenCodeSettingsConfigurable(private val project: Project) :
                 }
                 buttonsGroup("Terminal engine:") {
                     row {
-                        radioButton("Classic (Recommended)", TerminalEngine.CLASSIC)
+                        radioButton("Classic", TerminalEngine.CLASSIC)
                             .comment("Legacy JediTerm widget.")
+                    }
+                    row {
+                        radioButton("Reworked", TerminalEngine.REWORKED)
+                            .comment("New terminal engine. Requires IntelliJ Platform 2026.2 or newer.")
+                            .enabled(isReworkedTerminalSupported())
                     }
                 }.bind(pendingState::terminalEngine)
             }
@@ -419,8 +424,7 @@ class OpenCodeSettingsConfigurable(private val project: Project) :
         pendingState.diffTraceHistoryEnabled = settings.diffTraceHistoryEnabled
         pendingState.inlineTerminalEnabled = settings.inlineTerminalEnabled
         pendingState.sessionsSectionVisible = settings.sessionsSectionVisible
-        pendingState.terminalEngine =
-            if (settings.terminalEngine == TerminalEngine.REWORKED) TerminalEngine.CLASSIC else settings.terminalEngine
+        pendingState.terminalEngine = settings.terminalEngine.effectiveForIde()
         pendingState.braveModeEnabled = settings.braveModeEnabled
         pendingState.jetBrainsMcpWarningEnabled = settings.jetBrainsMcpWarningEnabled
     }
