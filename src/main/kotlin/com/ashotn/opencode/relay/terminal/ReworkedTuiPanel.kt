@@ -90,7 +90,6 @@ class ReworkedTuiPanel(
             val tabBuilder = manager.createTabBuilder()
                 .workingDirectory(workingDir)
                 .requestFocus(false)
-                .shouldAddToToolWindow(false)
                 .tabName("OpenCode Relay")
                 .shellCommand(command)
             val startupOptions = ShellStartupOptions.Builder()

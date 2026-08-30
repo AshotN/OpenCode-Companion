@@ -3,7 +3,7 @@
 package com.ashotn.opencode.relay.terminal
 
 import com.intellij.codeWithMe.ClientId
-import com.intellij.codeWithMe.ClientIdContextElement
+import com.intellij.codeWithMe.asContextElement
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.Logger
@@ -58,7 +58,7 @@ internal class ReworkedOsc52Session private constructor(
         ): ReworkedOsc52Session? {
             val listenerDisposable = Disposer.newDisposable("OpenCode reworked terminal OSC52 listener")
             val scope = CoroutineScope(
-                SupervisorJob() + Dispatchers.Default + ClientIdContextElement(ClientId.localId)
+                SupervisorJob() + Dispatchers.Default + ClientId.localId.asContextElement()
             )
             val session = ReworkedOsc52Session(scope, listenerDisposable)
 
