@@ -20,6 +20,7 @@
 <p><strong>Fixed</strong></p>
 <ul>
   <li>Improve embedded terminal cleanup and restart behavior when startup fails, a session terminates, or the terminal engine changes.</li>
+  <li>Send selected folders as <code>@path/</code> and multi-line editor selections as <code>@path#Lstart-end</code> so OpenCode recognizes them correctly.</li>
 </ul>
 
 ## [2.2.0] - 2026-06-25

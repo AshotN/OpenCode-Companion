@@ -225,7 +225,7 @@ class OpenCodeSettingsConfigurable(private val project: Project) :
                 }
                 buttonsGroup("Terminal engine:") {
                     row {
-                        radioButton("Classic (Recommended)", TerminalEngine.CLASSIC)
+                        radioButton("Classic", TerminalEngine.CLASSIC)
                             .comment("Legacy JediTerm widget.")
                     }
                     row {
