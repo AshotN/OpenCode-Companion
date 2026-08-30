@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-30
+
 <p><strong>Added</strong></p>
 <ul>
   <li>Add the Reworked Terminal as an optional embedded TUI engine on IntelliJ Platform 2026.2 and newer, with feature parity for clipboard integration, file drag and drop, and file navigation.</li>
